@@ -87,6 +87,42 @@ def cover_height() -> float:
     return ACTIVE_COVER_HEIGHT_MM
 
 
+def nudge_item_with_key(
+    item: QtWidgets.QGraphicsItem,
+    event: QtGui.QKeyEvent,
+) -> bool:
+    """Move an editable graphics item with Shift or Ctrl plus an arrow key."""
+    modifiers = event.modifiers()
+    if not (
+        modifiers & QtCore.Qt.KeyboardModifier.ShiftModifier
+        or modifiers & QtCore.Qt.KeyboardModifier.ControlModifier
+    ):
+        return False
+    directions = {
+        QtCore.Qt.Key.Key_Left: (-1.0, 0.0),
+        QtCore.Qt.Key.Key_Right: (1.0, 0.0),
+        QtCore.Qt.Key.Key_Up: (0.0, -1.0),
+        QtCore.Qt.Key.Key_Down: (0.0, 1.0),
+    }
+    direction = directions.get(event.key())
+    if direction is None or item.scene() is None:
+        return False
+    step = (
+        5.0
+        if modifiers & QtCore.Qt.KeyboardModifier.ControlModifier
+        else 1.0
+    )
+    scene = item.scene()
+    scene.suppress_snap = True
+    try:
+        item.setPos(item.pos() + QtCore.QPointF(direction[0] * step, direction[1] * step))
+    finally:
+        scene.suppress_snap = False
+    item.setSelected(True)
+    event.accept()
+    return True
+
+
 def mm_to_points(value: float) -> float:
     """Convert millimetres to PDF points."""
     return value * 72.0 / MM_PER_INCH
@@ -238,6 +274,12 @@ class CoverTextItem(QtWidgets.QGraphicsTextItem):
         cursor.clearSelection()
         self.setTextCursor(cursor)
 
+    def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
+        """Move the text block with arrow keys instead of editing its cursor."""
+        if nudge_item_with_key(self, event):
+            return
+        super().keyPressEvent(event)
+
     def itemChange(
         self,
         change: QtWidgets.QGraphicsItem.GraphicsItemChange,
@@ -248,6 +290,7 @@ class CoverTextItem(QtWidgets.QGraphicsTextItem):
             change == QtWidgets.QGraphicsItem.GraphicsItemChange.ItemPositionChange
             and self.scene() is not None
             and getattr(self.scene(), "snap_to_guides", False)
+            and not getattr(self.scene(), "suppress_snap", False)
         ):
             position = value
             if isinstance(position, QtCore.QPointF):
@@ -337,6 +380,7 @@ class CoverImageItem(QtWidgets.QGraphicsPixmapItem):
         self.setFlags(
             QtWidgets.QGraphicsItem.GraphicsItemFlag.ItemIsMovable
             | QtWidgets.QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
+            | QtWidgets.QGraphicsItem.GraphicsItemFlag.ItemIsFocusable
             | QtWidgets.QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges
         )
         self.setTransformationMode(QtCore.Qt.TransformationMode.SmoothTransformation)
@@ -370,6 +414,12 @@ class CoverImageItem(QtWidgets.QGraphicsPixmapItem):
         self._handles.append(ImageHandleItem(self, "rotate"))
         self._update_handle_positions()
 
+    def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
+        """Move the image with arrow keys."""
+        if nudge_item_with_key(self, event):
+            return
+        super().keyPressEvent(event)
+
     def paint(
         self,
         painter: QtGui.QPainter,
@@ -395,6 +445,7 @@ class CoverImageItem(QtWidgets.QGraphicsPixmapItem):
             change == QtWidgets.QGraphicsItem.GraphicsItemChange.ItemPositionChange
             and self.scene() is not None
             and getattr(self.scene(), "snap_to_guides", False)
+            and not getattr(self.scene(), "suppress_snap", False)
             and self._mouse_mode is None
         ):
             position = value
@@ -815,6 +866,7 @@ class CoverGraphicsView(QtWidgets.QGraphicsView):
     imageDropped = QtCore.Signal(str)
     imagePasted = QtCore.Signal(QtGui.QPixmap)
     deleteRequested = QtCore.Signal()
+    nudgeRequested = QtCore.Signal(int, int)
 
     def __init__(self, scene: QtWidgets.QGraphicsScene) -> None:
         super().__init__(scene)
@@ -839,9 +891,45 @@ class CoverGraphicsView(QtWidgets.QGraphicsView):
         event.ignore()
 
     def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
-        """Paste an image from the system clipboard with Ctrl+V."""
+        """Handle clipboard actions and keyboard movement of selected artwork."""
         if event.key() == QtCore.Qt.Key.Key_Delete:
             self.deleteRequested.emit()
+            event.accept()
+            return
+        directions = {
+            QtCore.Qt.Key.Key_Left: (-1, 0),
+            QtCore.Qt.Key.Key_Right: (1, 0),
+            QtCore.Qt.Key.Key_Up: (0, -1),
+            QtCore.Qt.Key.Key_Down: (0, 1),
+        }
+        if (
+            event.key() in directions
+            and (
+                event.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier
+                or event.modifiers() & QtCore.Qt.KeyboardModifier.ControlModifier
+            )
+        ):
+            step = 5 if event.modifiers() & QtCore.Qt.KeyboardModifier.ControlModifier else 1
+            dx, dy = directions[event.key()]
+            selected = next(
+                (
+                    item
+                    for item in self.scene().selectedItems()
+                    if isinstance(item, (CoverTextItem, CoverImageItem, BackgroundImageItem))
+                ),
+                None,
+            )
+            if selected is not None:
+                scene = self.scene()
+                scene.suppress_snap = True
+                try:
+                    selected.setPos(selected.pos() + QtCore.QPointF(dx * step, dy * step))
+                finally:
+                    scene.suppress_snap = False
+                selected.setSelected(True)
+                event.accept()
+                return
+            self.nudgeRequested.emit(dx * step, dy * step)
             event.accept()
             return
         if event.matches(QtGui.QKeySequence.StandardKey.Paste):
@@ -851,6 +939,11 @@ class CoverGraphicsView(QtWidgets.QGraphicsView):
                 event.accept()
                 return
         super().keyPressEvent(event)
+
+    def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
+        """Keep keyboard focus on the canvas after selecting an item."""
+        self.setFocus(QtCore.Qt.FocusReason.MouseFocusReason)
+        super().mousePressEvent(event)
 
     def mouseReleaseEvent(self, event: QtGui.QMouseEvent) -> None:
         """Finish a drag without changing the position selected by the user."""
@@ -928,6 +1021,7 @@ class MainWindow(QtWidgets.QMainWindow):
             cover_height() + 2 * BLEED_MM,
         )
         self.scene.snap_to_guides = True
+        self.scene.suppress_snap = False
         self.scene.snap_position = self._snap_item_position
         self.scene.snap_guides = self._build_snap_guides()
         self.grid_item = GridItem(self.scene.sceneRect())
@@ -940,6 +1034,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.view.imageDropped.connect(self.add_image_from_path)
         self.view.imagePasted.connect(self.add_image_from_pixmap)
         self.view.deleteRequested.connect(self.delete_selected)
+        self.view.nudgeRequested.connect(self.nudge_selected)
         self.scene.selectionChanged.connect(self.update_controls)
         self.scene.focusItemChanged.connect(
             lambda _new_item, _old_item, _reason: self.update_controls()
@@ -1181,6 +1276,8 @@ class MainWindow(QtWidgets.QMainWindow):
             15.0,
         )
         item.setSelected(True)
+        self.scene.setFocusItem(item)
+        self.view.setFocus(QtCore.Qt.FocusReason.OtherFocusReason)
         self.view.ensureVisible(item)
 
     def choose_image(self) -> None:
@@ -1234,6 +1331,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.background_item.setPos(0, 0)
         self.scene.clearSelection()
         self.background_item.setSelected(True)
+        self.scene.setFocusItem(self.background_item)
+        self.view.setFocus(QtCore.Qt.FocusReason.OtherFocusReason)
         self.background_size_combo.setCurrentIndex(0)
         self.background_rotation_combo.setCurrentIndex(0)
         self.view.ensureVisible(self.background_item)
@@ -1325,6 +1424,7 @@ class MainWindow(QtWidgets.QMainWindow):
         item.setZValue(max(5.0, max(artwork_z_values, default=5.0) + 1.0))
         item.setSelected(True)
         self.scene.setFocusItem(item)
+        self.view.setFocus(QtCore.Qt.FocusReason.OtherFocusReason)
         self.view.ensureVisible(item)
         self.view.viewport().update()
         self.statusBar().showMessage(f"Image inserted: {pixmap.width()} x {pixmap.height()} px")
@@ -1354,7 +1454,24 @@ class MainWindow(QtWidgets.QMainWindow):
         if item is None or not self.x_spin.isEnabled():
             return
         x, y = self.x_spin.value(), self.y_spin.value()
-        item.setPos(x, y)
+        self.scene.suppress_snap = True
+        try:
+            item.setPos(x, y)
+        finally:
+            self.scene.suppress_snap = False
+
+    def nudge_selected(self, dx: int, dy: int) -> None:
+        """Move the selected artwork by one millimetre, or five with Shift."""
+        item = self.selected_item()
+        if item is None or item in (self.grid_item, self.frame_item):
+            return
+        self.scene.suppress_snap = True
+        try:
+            item.setPos(item.pos() + QtCore.QPointF(float(dx), float(dy)))
+        finally:
+            self.scene.suppress_snap = False
+        item.setSelected(True)
+        self.scene.setFocusItem(item)
 
     def scale_selected(self, value: int) -> None:
         """Apply a relative scale to an image or text item."""
