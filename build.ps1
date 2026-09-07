@@ -17,6 +17,12 @@ if ($LASTEXITCODE -ne 0) {
     }
 }
 
+Write-Host "Generating application icon..."
+& $Python "build_icon.py"
+if ($LASTEXITCODE -ne 0) {
+    throw "Could not generate application icon."
+}
+
 Write-Host "Building CD Cover Print..."
 & $Python -m PyInstaller `
     --noconfirm `
@@ -24,6 +30,7 @@ Write-Host "Building CD Cover Print..."
     --windowed `
     --onefile `
     --name "CD Cover Print" `
+    --icon "cd_cover_print.ico" `
     main.py
 
 if ($LASTEXITCODE -ne 0) {
