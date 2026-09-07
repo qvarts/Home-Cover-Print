@@ -33,13 +33,48 @@ class CoverSpec:
 
 
 COVER_SPECS = (
-    CoverSpec("front", "Jewel Case Front — 120 × 120 mm", 120.0, 120.0),
-    CoverSpec("back", "Jewel Case Back — 151 × 118 mm", 151.0, 118.0, (6.0, 145.0)),
-    CoverSpec("booklet", "Folded Booklet — 240 × 120 mm", 240.0, 120.0, (120.0,)),
+    CoverSpec("front", "Jewel Case (Front) — 120 × 120 mm", 120.0, 120.0),
+    CoverSpec("booklet", "Jewel Case (Booklet) — 240 × 120 mm", 240.0, 120.0, (120.0,)),
+    CoverSpec("back", "Jewel Case (Back) — 150 × 118 mm", 150.0, 118.0, (6.0, 144.0)),
+    CoverSpec("slim", "Slim Case (Front) — 122 × 122 mm", 122.0, 122.0),
+    CoverSpec(
+        "slim_booklet_plain",
+        "Slim Case (Booklet) — 244 × 122 mm",
+        244.0,
+        122.0,
+        (122.0,),
+    ),
+    CoverSpec(
+        "slim_booklet",
+        "Slim Case (Folded) — 262 × 122 mm",
+        262.0,
+        122.0,
+        (4.0, 140.0),
+    ),
 )
 
 ACTIVE_COVER_WIDTH_MM = 120.0
 ACTIVE_COVER_HEIGHT_MM = 120.0
+
+
+def create_application_icon() -> QtGui.QIcon:
+    """Create a simple vector-style CD icon without external image assets."""
+    pixmap = QtGui.QPixmap(64, 64)
+    pixmap.fill(QtCore.Qt.GlobalColor.transparent)
+    painter = QtGui.QPainter(pixmap)
+    painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+    painter.setBrush(QtGui.QColor("#263746"))
+    painter.setPen(QtGui.QPen(QtGui.QColor("#17232d"), 2))
+    painter.drawEllipse(QtCore.QRectF(5, 5, 54, 54))
+    painter.setBrush(QtGui.QColor("#79c2d0"))
+    painter.setPen(QtCore.Qt.PenStyle.NoPen)
+    painter.drawEllipse(QtCore.QRectF(25, 25, 14, 14))
+    painter.setBrush(QtGui.QColor("#f4f7f8"))
+    painter.drawEllipse(QtCore.QRectF(29, 29, 6, 6))
+    painter.setPen(QtGui.QPen(QtGui.QColor("#79c2d0"), 2))
+    painter.drawArc(QtCore.QRectF(13, 13, 38, 38), 25 * 16, 75 * 16)
+    painter.end()
+    return QtGui.QIcon(pixmap)
 
 
 def cover_width() -> float:
@@ -99,6 +134,7 @@ class CoverFrameItem(QtWidgets.QGraphicsItem):
         self._height = cover_height()
         self._guides: tuple[float, ...] = ()
         self.show_guides = True
+        self.fold_guide_opacity = 210
         # Keep the cut line visible over artwork while leaving resize handles
         # above it during image editing.
         self.setZValue(100000)
@@ -133,7 +169,13 @@ class CoverFrameItem(QtWidgets.QGraphicsItem):
         painter.setPen(QtGui.QPen(cut_line_color, 0.25, QtCore.Qt.PenStyle.DashLine))
         painter.drawRect(QtCore.QRectF(0, 0, self._width, self._height))
         if self.show_guides:
-            painter.setPen(QtGui.QPen(QtGui.QColor(127, 139, 152, 110), 0.25, QtCore.Qt.PenStyle.DotLine))
+            painter.setPen(
+                QtGui.QPen(
+                    QtGui.QColor(127, 139, 152, self.fold_guide_opacity),
+                    0.25,
+                    QtCore.Qt.PenStyle.DotLine,
+                )
+            )
             for guide_x in self._guides:
                 painter.drawLine(QtCore.QPointF(guide_x, 0), QtCore.QPointF(guide_x, self._height))
         mark = BLEED_MM
@@ -826,8 +868,9 @@ class CoverRenderer:
         scene: QtWidgets.QGraphicsScene,
         painter: QtGui.QPainter,
         page_rect: QtCore.QRectF,
+        show_fold_guides: bool = False,
     ) -> None:
-        """Render the active cover including bleed in device pixels."""
+        """Render the active cover, optionally including subtle fold guides."""
         device = painter.device()
         if device is None:
             raise RuntimeError("The painter has no active paint device")
@@ -849,15 +892,18 @@ class CoverRenderer:
         frame_items = [item for item in scene.items() if isinstance(item, CoverFrameItem)]
         for item in grid_items:
             item.setVisible(False)
+        previous_guide_states = [(item.show_guides, item.fold_guide_opacity) for item in frame_items]
         for item in frame_items:
-            item.show_guides = False
+            item.show_guides = show_fold_guides
+            item.fold_guide_opacity = 110
         try:
             scene.render(painter, target, source, QtCore.Qt.AspectRatioMode.IgnoreAspectRatio)
         finally:
             for item in grid_items:
                 item.setVisible(True)
-            for item in frame_items:
-                item.show_guides = True
+            for item, (previous_state, previous_opacity) in zip(frame_items, previous_guide_states):
+                item.show_guides = previous_state
+                item.fold_guide_opacity = previous_opacity
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -938,6 +984,14 @@ class MainWindow(QtWidgets.QMainWindow):
         print_button.clicked.connect(self.print_cover)
         for button in (add_image, add_background, add_text, export_pdf, print_button, preview_button):
             side.addWidget(button)
+        self.export_fold_guides_check = QtWidgets.QCheckBox(
+            "Print fold lines"
+        )
+        self.export_fold_guides_check.setToolTip(
+            "When enabled, fold lines are included in PDF export, printing, and print preview."
+        )
+        self.export_fold_guides_check.setChecked(True)
+        side.addWidget(self.export_fold_guides_check)
         side.addSpacing(16)
         side.addWidget(QtWidgets.QLabel("Selected element"))
         form = QtWidgets.QFormLayout()
@@ -1502,7 +1556,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 page_rect_points.width() * points_to_device,
                 page_rect_points.height() * points_to_device,
             )
-            CoverRenderer.render(self.scene, painter, page_rect)
+            CoverRenderer.render(
+                self.scene,
+                painter,
+                page_rect,
+                self.export_fold_guides_check.isChecked(),
+            )
         finally:
             painter.end()
 
@@ -1511,7 +1570,12 @@ class MainWindow(QtWidgets.QMainWindow):
         painter = QtGui.QPainter(printer)
         try:
             page_rect = printer.pageRect(QtPrintSupport.QPrinter.Unit.DevicePixel)
-            CoverRenderer.render(self.scene, painter, page_rect)
+            CoverRenderer.render(
+                self.scene,
+                painter,
+                page_rect,
+                self.export_fold_guides_check.isChecked(),
+            )
         finally:
             painter.end()
 
@@ -1537,7 +1601,9 @@ def main() -> int:
     """Run the desktop application."""
     app = QtWidgets.QApplication(sys.argv)
     app.setApplicationName("CD Cover Print")
+    app.setWindowIcon(create_application_icon())
     window = MainWindow()
+    window.setWindowIcon(app.windowIcon())
     window.show()
     return app.exec()
 
