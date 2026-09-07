@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import math
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -17,8 +18,39 @@ from PySide6 import QtCore, QtGui, QtPrintSupport, QtWidgets
 MM_PER_INCH = 25.4
 PAGE_WIDTH_MM = 210.0
 PAGE_HEIGHT_MM = 297.0
-COVER_SIZE_MM = 120.0
 BLEED_MM = 3.0
+
+
+@dataclass(frozen=True)
+class CoverSpec:
+    """Physical dimensions and guide lines for one cover format."""
+
+    key: str
+    label: str
+    width_mm: float
+    height_mm: float
+    guides: tuple[float, ...] = ()
+
+
+COVER_SPECS = (
+    CoverSpec("front", "Jewel Case Front — 120 × 120 mm", 120.0, 120.0),
+    CoverSpec("back", "Jewel Case Back — 151 × 118 mm", 151.0, 118.0, (6.0, 145.0)),
+    CoverSpec("front_back", "Front + Back — 271 × 120 mm", 271.0, 120.0, (120.0,)),
+    CoverSpec("booklet", "Folded Booklet — 240 × 120 mm", 240.0, 120.0, (120.0,)),
+)
+
+ACTIVE_COVER_WIDTH_MM = 120.0
+ACTIVE_COVER_HEIGHT_MM = 120.0
+
+
+def cover_width() -> float:
+    """Return the active cover width in millimetres."""
+    return ACTIVE_COVER_WIDTH_MM
+
+
+def cover_height() -> float:
+    """Return the active cover height in millimetres."""
+    return ACTIVE_COVER_HEIGHT_MM
 
 
 def mm_to_points(value: float) -> float:
@@ -64,13 +96,30 @@ class CoverFrameItem(QtWidgets.QGraphicsItem):
 
     def __init__(self) -> None:
         super().__init__()
+        self._width = cover_width()
+        self._height = cover_height()
+        self._guides: tuple[float, ...] = ()
+        self.show_guides = True
         # Keep the cut line visible over artwork while leaving resize handles
         # above it during image editing.
         self.setZValue(100000)
         self.setAcceptedMouseButtons(QtCore.Qt.MouseButton.NoButton)
 
     def boundingRect(self) -> QtCore.QRectF:
-        return QtCore.QRectF(-BLEED_MM, -BLEED_MM, COVER_SIZE_MM + 2 * BLEED_MM, COVER_SIZE_MM + 2 * BLEED_MM)
+        return QtCore.QRectF(
+            -BLEED_MM,
+            -BLEED_MM,
+            self._width + 2 * BLEED_MM,
+            self._height + 2 * BLEED_MM,
+        )
+
+    def set_spec(self, spec: CoverSpec) -> None:
+        """Update the visible cut and fold guides for a cover format."""
+        self.prepareGeometryChange()
+        self._width = spec.width_mm
+        self._height = spec.height_mm
+        self._guides = spec.guides
+        self.update()
 
     def paint(
         self,
@@ -83,15 +132,19 @@ class CoverFrameItem(QtWidgets.QGraphicsItem):
         painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
         cut_line_color = QtGui.QColor(127, 139, 152, 150)
         painter.setPen(QtGui.QPen(cut_line_color, 0.25, QtCore.Qt.PenStyle.DashLine))
-        painter.drawRect(QtCore.QRectF(0, 0, COVER_SIZE_MM, COVER_SIZE_MM))
+        painter.drawRect(QtCore.QRectF(0, 0, self._width, self._height))
+        if self.show_guides:
+            painter.setPen(QtGui.QPen(QtGui.QColor(127, 139, 152, 110), 0.25, QtCore.Qt.PenStyle.DotLine))
+            for guide_x in self._guides:
+                painter.drawLine(QtCore.QPointF(guide_x, 0), QtCore.QPointF(guide_x, self._height))
         mark = BLEED_MM
         painter.setPen(QtGui.QPen(cut_line_color, 0.25, QtCore.Qt.PenStyle.DashLine))
         for x, y, dx, dy in (
             (0, 0, -mark, 0), (0, 0, 0, -mark),
-            (COVER_SIZE_MM, 0, mark, 0), (COVER_SIZE_MM, 0, 0, -mark),
-            (0, COVER_SIZE_MM, -mark, 0), (0, COVER_SIZE_MM, 0, mark),
-            (COVER_SIZE_MM, COVER_SIZE_MM, mark, 0),
-            (COVER_SIZE_MM, COVER_SIZE_MM, 0, mark),
+            (self._width, 0, mark, 0), (self._width, 0, 0, -mark),
+            (0, self._height, -mark, 0), (0, self._height, 0, mark),
+            (self._width, self._height, mark, 0),
+            (self._width, self._height, 0, mark),
         ):
             painter.drawLine(QtCore.QPointF(x, y), QtCore.QPointF(x + dx, y + dy))
         painter.restore()
@@ -111,6 +164,69 @@ class CoverTextItem(QtWidgets.QGraphicsTextItem):
         self.setDefaultTextColor(QtGui.QColor("#111820"))
         self.setZValue(10)
         self.setFont(QtGui.QFont("Arial", 14))
+
+
+class BackgroundImageItem(QtWidgets.QGraphicsPixmapItem):
+    """Movable image layer clipped conceptually to the 120 mm cover area."""
+
+    def __init__(self, pixmap: QtGui.QPixmap) -> None:
+        normalized = pixmap.scaled(
+            1200,
+            1200,
+            QtCore.Qt.AspectRatioMode.KeepAspectRatio,
+            QtCore.Qt.TransformationMode.SmoothTransformation,
+        )
+        super().__init__(normalized)
+        self.setFlags(
+            QtWidgets.QGraphicsItem.GraphicsItemFlag.ItemIsMovable
+            | QtWidgets.QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
+        )
+        self.setTransformationMode(QtCore.Qt.TransformationMode.SmoothTransformation)
+        self.setZValue(-500)
+        self.setOpacity(1.0)
+        self.setTransformOriginPoint(QtCore.QPointF(0, 0))
+        self.scale_x = 1.0
+        self.scale_y = 1.0
+        self.size_mode = "cover"
+        self.rotation_preset = 0
+        self.apply_size_mode()
+
+    def apply_size_mode(self, mode: Optional[str] = None) -> None:
+        """Apply a CSS-like size mode while preserving the original image."""
+        if mode is not None:
+            self.size_mode = mode
+        width = max(1.0, float(self.pixmap().width()))
+        height = max(1.0, float(self.pixmap().height()))
+        if self.size_mode == "cover":
+            scale_x = scale_y = max(cover_width() / width, cover_height() / height)
+        elif self.size_mode == "contain":
+            scale_x = scale_y = min(cover_width() / width, cover_height() / height)
+        elif self.size_mode == "stretch":
+            scale_x = cover_width() / width
+            scale_y = cover_height() / height
+        else:  # auto: use the application's 10 px/mm editing convention.
+            scale_x = scale_y = 0.1
+        self.scale_x = scale_x
+        self.scale_y = scale_y
+        self._apply_transform()
+
+    def _apply_transform(self) -> None:
+        """Scale and rotate around the centre of the 120 mm cover."""
+        center = QtCore.QRectF(self.pixmap().rect()).center()
+        radians = math.radians(self.rotation_preset)
+        cosine, sine = math.cos(radians), math.sin(radians)
+        m11 = self.scale_x * cosine
+        m12 = self.scale_x * sine
+        m21 = -self.scale_y * sine
+        m22 = self.scale_y * cosine
+        dx = cover_width() / 2 - m11 * center.x() - m21 * center.y()
+        dy = cover_height() / 2 - m12 * center.x() - m22 * center.y()
+        self.setTransform(QtGui.QTransform(m11, m12, m21, m22, dx, dy), combine=False)
+
+    def set_rotation_preset(self, angle: int) -> None:
+        """Set one of the supported background rotation presets."""
+        self.rotation_preset = angle
+        self._apply_transform()
 
 
 class ImageHandleItem(QtWidgets.QGraphicsObject):
@@ -175,7 +291,7 @@ class CoverImageItem(QtWidgets.QGraphicsPixmapItem):
         )
         super().__init__(normalized)
         # Start with the largest dimension aligned to the 120 mm cover.
-        self.base_scale = COVER_SIZE_MM / max(1, normalized.width(), normalized.height())
+        self.base_scale = max(cover_width(), cover_height()) / max(1, normalized.width(), normalized.height())
         self.scale_x = self.base_scale
         self.scale_y = self.base_scale
         self.setFlags(
@@ -610,34 +726,60 @@ class CoverRenderer:
         painter: QtGui.QPainter,
         page_rect: QtCore.QRectF,
     ) -> None:
-        """Render 126 mm including bleed, centred on the supplied page rect."""
-        artwork_size = COVER_SIZE_MM + 2 * BLEED_MM
-        x = page_rect.x() + (page_rect.width() - mm_to_points(artwork_size)) / 2
-        y = page_rect.y() + (page_rect.height() - mm_to_points(artwork_size)) / 2
-        target = QtCore.QRectF(x, y, mm_to_points(artwork_size), mm_to_points(artwork_size))
-        source = QtCore.QRectF(-BLEED_MM, -BLEED_MM, artwork_size, artwork_size)
+        """Render the active cover including bleed in device pixels."""
+        device = painter.device()
+        if device is None:
+            raise RuntimeError("The painter has no active paint device")
+        dpi_x = device.logicalDpiX()
+        dpi_y = device.logicalDpiY()
+        if dpi_x <= 0 or dpi_y <= 0:
+            raise RuntimeError("The paint device has invalid logical DPI")
+        artwork_width = cover_width() + 2 * BLEED_MM
+        artwork_height = cover_height() + 2 * BLEED_MM
+        target_width = artwork_width * dpi_x / MM_PER_INCH
+        target_height = artwork_height * dpi_y / MM_PER_INCH
+        x = page_rect.x() + (page_rect.width() - target_width) / 2
+        y = page_rect.y() + (page_rect.height() - target_height) / 2
+        target = QtCore.QRectF(
+            x, y, target_width, target_height
+        )
+        source = QtCore.QRectF(-BLEED_MM, -BLEED_MM, artwork_width, artwork_height)
         grid_items = [item for item in scene.items() if isinstance(item, GridItem)]
+        frame_items = [item for item in scene.items() if isinstance(item, CoverFrameItem)]
         for item in grid_items:
             item.setVisible(False)
+        for item in frame_items:
+            item.show_guides = False
         try:
             scene.render(painter, target, source, QtCore.Qt.AspectRatioMode.IgnoreAspectRatio)
         finally:
             for item in grid_items:
                 item.setVisible(True)
+            for item in frame_items:
+                item.show_guides = True
 
 
 class MainWindow(QtWidgets.QMainWindow):
     """Main application window and controller for the cover editor."""
 
     MAX_IMAGE_PIXELS = 2400
+    FILE_DIRECTORY_KEY = "last-file-directory"
 
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("CD Cover Print")
         self.resize(1200, 780)
-        self.scene = QtWidgets.QGraphicsScene(-BLEED_MM, -BLEED_MM, COVER_SIZE_MM + 2 * BLEED_MM, COVER_SIZE_MM + 2 * BLEED_MM)
+        self.cover_spec = COVER_SPECS[0]
+        self.scene = QtWidgets.QGraphicsScene(
+            -BLEED_MM,
+            -BLEED_MM,
+            cover_width() + 2 * BLEED_MM,
+            cover_height() + 2 * BLEED_MM,
+        )
         self.grid_item = GridItem(self.scene.sceneRect())
         self.frame_item = CoverFrameItem()
+        self.frame_item.set_spec(self.cover_spec)
+        self.background_item: Optional[BackgroundImageItem] = None
         self.scene.addItem(self.grid_item)
         self.scene.addItem(self.frame_item)
         self.view = CoverGraphicsView(self.scene)
@@ -657,17 +799,27 @@ class MainWindow(QtWidgets.QMainWindow):
         sidebar.setFixedWidth(250)
         side = QtWidgets.QVBoxLayout(sidebar)
 
+        side.addWidget(QtWidgets.QLabel("Cover type"))
+        self.cover_type_combo = QtWidgets.QComboBox()
+        for spec in COVER_SPECS:
+            self.cover_type_combo.addItem(spec.label, spec.key)
+        self.cover_type_combo.currentIndexChanged.connect(self.set_cover_type)
+        side.addWidget(self.cover_type_combo)
         add_text = QtWidgets.QPushButton("Add Text")
         add_text.clicked.connect(self.add_text)
         add_image = QtWidgets.QPushButton("Add Image")
         add_image.clicked.connect(self.choose_image)
+        add_background = QtWidgets.QPushButton("Add Background")
+        add_background.clicked.connect(self.choose_background)
+        remove_background = QtWidgets.QPushButton("Remove Background")
+        remove_background.clicked.connect(self.remove_background)
         paste_image = QtWidgets.QPushButton("Paste Image (Ctrl+V)")
         paste_image.clicked.connect(self.paste_image)
         export_pdf = QtWidgets.QPushButton("Export PDF")
         export_pdf.clicked.connect(self.export_pdf)
         print_button = QtWidgets.QPushButton("Print")
         print_button.clicked.connect(self.print_cover)
-        for button in (add_text, add_image, paste_image, export_pdf, print_button):
+        for button in (add_text, add_image, add_background, remove_background, paste_image, export_pdf, print_button):
             side.addWidget(button)
         side.addSpacing(12)
         side.addWidget(QtWidgets.QLabel("Selected element"))
@@ -675,7 +827,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.x_spin = QtWidgets.QDoubleSpinBox()
         self.y_spin = QtWidgets.QDoubleSpinBox()
         for spin in (self.x_spin, self.y_spin):
-            spin.setRange(-BLEED_MM, COVER_SIZE_MM + BLEED_MM)
+            spin.setRange(-BLEED_MM, max(cover_width(), cover_height()) + BLEED_MM)
             spin.setDecimals(2)
             spin.setSuffix(" mm")
         self.x_spin.valueChanged.connect(self.move_selected)
@@ -694,6 +846,22 @@ class MainWindow(QtWidgets.QMainWindow):
         self.rotation_spin.valueChanged.connect(self.rotate_selected)
         form.addRow("Rotation:", self.rotation_spin)
         side.addLayout(form)
+        side.addWidget(QtWidgets.QLabel("Background size"))
+        self.background_size_combo = QtWidgets.QComboBox()
+        self.background_size_combo.addItem("Cover", "cover")
+        self.background_size_combo.addItem("Contain", "contain")
+        self.background_size_combo.addItem("Auto", "auto")
+        self.background_size_combo.addItem("100% x 100%", "stretch")
+        self.background_size_combo.activated.connect(self.set_background_size_mode)
+        side.addWidget(self.background_size_combo)
+        side.addWidget(QtWidgets.QLabel("Background rotation"))
+        self.background_rotation_combo = QtWidgets.QComboBox()
+        for angle in (0, 90, 180, 270):
+            self.background_rotation_combo.addItem(f"{angle}°", angle)
+        self.background_rotation_combo.currentIndexChanged.connect(self.set_background_rotation)
+        self.background_size_combo.setEnabled(False)
+        self.background_rotation_combo.setEnabled(False)
+        side.addWidget(self.background_rotation_combo)
         self.font_button = QtWidgets.QPushButton("Choose Font")
         self.font_button.clicked.connect(self.choose_font)
         side.addWidget(self.font_button)
@@ -724,10 +892,56 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setCentralWidget(central)
         self.statusBar().showMessage("Select an image and use its handles to resize or rotate")
 
+    def set_cover_type(self, index: int) -> None:
+        """Switch the active physical cover format without deleting artwork."""
+        global ACTIVE_COVER_WIDTH_MM, ACTIVE_COVER_HEIGHT_MM
+        if not 0 <= index < len(COVER_SPECS):
+            return
+        spec = COVER_SPECS[index]
+        self.cover_spec = spec
+        ACTIVE_COVER_WIDTH_MM = spec.width_mm
+        ACTIVE_COVER_HEIGHT_MM = spec.height_mm
+        self.scene.setSceneRect(
+            -BLEED_MM,
+            -BLEED_MM,
+            spec.width_mm + 2 * BLEED_MM,
+            spec.height_mm + 2 * BLEED_MM,
+        )
+        self.grid_item.prepareGeometryChange()
+        self.grid_item._rect = self.scene.sceneRect()
+        self.grid_item.update()
+        self.frame_item.set_spec(spec)
+        if self.background_item is not None:
+            self.background_item.apply_size_mode()
+        self.view.fitInView(self.scene.sceneRect(), QtCore.Qt.AspectRatioMode.KeepAspectRatio)
+        self.view.viewport().update()
+        self.statusBar().showMessage(f"Cover type: {spec.label}")
+
     def selected_item(self) -> Optional[QtWidgets.QGraphicsItem]:
         """Return the first editable selected item."""
         selected = self.scene.selectedItems()
         return selected[0] if selected else None
+
+    def _file_dialog_directory(self) -> str:
+        """Return the last directory used by any file dialog."""
+        settings = QtCore.QSettings("CDCoverPrint", "CDCoverPrint")
+        return str(settings.value(self.FILE_DIRECTORY_KEY, str(Path.home())))
+
+    def _remember_file_path(self, path: str) -> None:
+        """Remember the directory containing a successfully chosen file."""
+        QtCore.QSettings("CDCoverPrint", "CDCoverPrint").setValue(
+            self.FILE_DIRECTORY_KEY, str(Path(path).parent)
+        )
+
+    def _page_orientation(self) -> QtGui.QPageLayout.Orientation:
+        """Choose A4 orientation so the active cover fits its printable width."""
+        artwork_width = cover_width() + 2 * BLEED_MM
+        artwork_height = cover_height() + 2 * BLEED_MM
+        if artwork_width > PAGE_WIDTH_MM or (
+            artwork_width > PAGE_HEIGHT_MM and artwork_width > artwork_height
+        ):
+            return QtGui.QPageLayout.Orientation.Landscape
+        return QtGui.QPageLayout.Orientation.Portrait
 
     def add_text(self) -> None:
         """Insert a starter text item into the cover."""
@@ -740,17 +954,78 @@ class MainWindow(QtWidgets.QMainWindow):
     def choose_image(self) -> None:
         """Open the image file picker."""
         formats = " ".join(f"*.{fmt.data().decode().lower()}" for fmt in QtGui.QImageReader.supportedImageFormats())
-        settings = QtCore.QSettings("CDCoverPrint", "CDCoverPrint")
-        last_dir = settings.value("last-image-directory", str(Path.home()))
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
             self,
             "Choose artwork",
-            str(last_dir),
+            self._file_dialog_directory(),
             f"Images ({formats});;All files (*)",
         )
         if path:
-            settings.setValue("last-image-directory", str(Path(path).parent))
+            self._remember_file_path(path)
             self.add_image_from_path(path)
+
+    def choose_background(self) -> None:
+        """Choose and install the single background image."""
+        formats = " ".join(
+            f"*.{fmt.data().decode().lower()}"
+            for fmt in QtGui.QImageReader.supportedImageFormats()
+        )
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self,
+            "Choose background",
+            self._file_dialog_directory(),
+            f"Images ({formats});;All files (*)",
+        )
+        if not path:
+            return
+        self._remember_file_path(path)
+        reader = QtGui.QImageReader(path)
+        reader.setAutoTransform(True)
+        image = reader.read()
+        if image.isNull():
+            QtWidgets.QMessageBox.warning(
+                self, "Background error", reader.errorString() or "Could not load background image."
+            )
+            return
+        self.set_background_pixmap(QtGui.QPixmap.fromImage(image))
+
+    def set_background_pixmap(self, pixmap: QtGui.QPixmap) -> None:
+        """Replace the current background and keep it behind all artwork."""
+        if self.background_item is not None:
+            self.scene.removeItem(self.background_item)
+        self.background_item = BackgroundImageItem(pixmap)
+        self.scene.addItem(self.background_item)
+        self.background_item.setPos(0, 0)
+        self.scene.clearSelection()
+        self.background_item.setSelected(True)
+        self.background_size_combo.setCurrentIndex(0)
+        self.background_rotation_combo.setCurrentIndex(0)
+        self.view.ensureVisible(self.background_item)
+        self.statusBar().showMessage("Background image inserted")
+
+    def remove_background(self) -> None:
+        """Remove the installed background image, if one exists."""
+        if self.background_item is None:
+            return
+        self.scene.removeItem(self.background_item)
+        self.background_item = None
+        self.scene.clearSelection()
+        self.statusBar().showMessage("Background image removed")
+
+    def set_background_size_mode(self, _index: int = -1) -> None:
+        """Apply the selected CSS-like background size mode."""
+        if self.background_item is None:
+            return
+        mode = self.background_size_combo.currentData()
+        self.background_item.setPos(0, 0)
+        self.background_item.apply_size_mode(str(mode))
+
+    def set_background_rotation(self) -> None:
+        """Apply the selected background rotation preset."""
+        if self.background_item is None:
+            return
+        angle = int(self.background_rotation_combo.currentData())
+        self.background_item.set_rotation_preset(angle)
 
     def add_image_from_path(self, path: str) -> None:
         """Load and add an image file, reporting invalid files to the user."""
@@ -786,8 +1061,8 @@ class MainWindow(QtWidgets.QMainWindow):
         item.detach_handles()
         image_rect = QtCore.QRectF(item.pixmap().rect())
         top_left = QtCore.QPointF(
-            (COVER_SIZE_MM - image_rect.width() * item.scale_x) / 2,
-            (COVER_SIZE_MM - image_rect.height() * item.scale_y) / 2,
+            (cover_width() - image_rect.width() * item.scale_x) / 2,
+            (cover_height() - image_rect.height() * item.scale_y) / 2,
         )
         item.setPos(top_left)
         artwork_z_values = (
@@ -805,7 +1080,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def delete_selected(self) -> None:
         """Remove the selected editable element from the scene."""
         item = self.selected_item()
-        if item is None or item in (self.grid_item, self.frame_item):
+        if item is None or item in (self.grid_item, self.frame_item, self.background_item):
             return
         if isinstance(item, CoverImageItem):
             for handle in item._handles:
@@ -847,7 +1122,9 @@ class MainWindow(QtWidgets.QMainWindow):
     def rotate_selected(self, value: float) -> None:
         """Apply a rotation while preserving the item's aspect ratio."""
         item = self.selected_item()
-        if item is not None:
+        if isinstance(item, BackgroundImageItem):
+            item.set_rotation_preset(int(value) % 360)
+        elif item is not None:
             if isinstance(item, CoverImageItem):
                 item.set_rotation(value)
             else:
@@ -888,6 +1165,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.rotation_spin.setEnabled(enabled)
         self.aspect_check.setEnabled(isinstance(item, CoverImageItem))
         self.font_button.setEnabled(isinstance(item, CoverTextItem))
+        has_background = isinstance(item, BackgroundImageItem)
+        self.background_size_combo.setEnabled(has_background)
+        self.background_rotation_combo.setEnabled(has_background)
         if not enabled:
             return
         blocker_x = QtCore.QSignalBlocker(self.x_spin)
@@ -909,29 +1189,57 @@ class MainWindow(QtWidgets.QMainWindow):
             del blocker_scale
         blocker_rotation = QtCore.QSignalBlocker(self.rotation_spin)
         self.rotation_spin.setValue(
-            item.rotation_angle() if isinstance(item, CoverImageItem) else item.rotation()
+            item.rotation_angle()
+            if isinstance(item, CoverImageItem)
+            else item.rotation_preset
+            if isinstance(item, BackgroundImageItem)
+            else item.rotation()
         )
         del blocker_rotation
+        background_selected = has_background
+        if background_selected:
+            size_index = self.background_size_combo.findData(item.size_mode)
+            if size_index >= 0:
+                self.background_size_combo.setCurrentIndex(size_index)
+            rotation_index = self.background_rotation_combo.findData(item.rotation_preset)
+            if rotation_index >= 0:
+                self.background_rotation_combo.setCurrentIndex(rotation_index)
 
     def _configure_printer(self, printer: QtPrintSupport.QPrinter, output_path: Optional[str] = None) -> None:
         """Configure a printer for A4, 300 DPI output."""
         printer.setResolution(300)
         printer.setPageSize(QtGui.QPageSize(QtGui.QPageSize.PageSizeId.A4))
-        printer.setPageOrientation(QtGui.QPageLayout.Orientation.Portrait)
+        printer.setPageOrientation(self._page_orientation())
         if output_path:
             printer.setOutputFormat(QtPrintSupport.QPrinter.OutputFormat.PdfFormat)
             printer.setOutputFileName(output_path)
 
     def export_pdf(self) -> None:
         """Export the artwork and crop marks as a vector PDF."""
-        path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Export PDF", "cd-cover.pdf", "PDF files (*.pdf)")
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self,
+            "Export PDF",
+            str(Path(self._file_dialog_directory()) / "cd-cover.pdf"),
+            "PDF files (*.pdf)",
+        )
         if not path:
             return
-        printer = QtPrintSupport.QPrinter(QtPrintSupport.QPrinter.PrinterMode.HighResolution)
-        self._configure_printer(printer, path)
-        painter = QtGui.QPainter(printer)
+        self._remember_file_path(path)
+        writer = QtGui.QPdfWriter(path)
+        writer.setResolution(300)
+        writer.setPageSize(QtGui.QPageSize(QtGui.QPageSize.PageSizeId.A4))
+        writer.setPageOrientation(self._page_orientation())
+        painter = QtGui.QPainter(writer)
         try:
-            CoverRenderer.render(self.scene, painter, printer.pageRect(QtPrintSupport.QPrinter.Unit.Point))
+            page_rect_points = writer.pageLayout().paintRect(QtGui.QPageLayout.Unit.Point)
+            points_to_device = writer.resolution() / 72.0
+            page_rect = QtCore.QRectF(
+                page_rect_points.x() * points_to_device,
+                page_rect_points.y() * points_to_device,
+                page_rect_points.width() * points_to_device,
+                page_rect_points.height() * points_to_device,
+            )
+            CoverRenderer.render(self.scene, painter, page_rect)
         finally:
             painter.end()
 
@@ -943,7 +1251,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted:
             painter = QtGui.QPainter(printer)
             try:
-                CoverRenderer.render(self.scene, painter, printer.pageRect(QtPrintSupport.QPrinter.Unit.Point))
+                page_rect = printer.pageRect(QtPrintSupport.QPrinter.Unit.DevicePixel)
+                CoverRenderer.render(self.scene, painter, page_rect)
             finally:
                 painter.end()
 
