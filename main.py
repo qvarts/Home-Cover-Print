@@ -35,7 +35,6 @@ class CoverSpec:
 COVER_SPECS = (
     CoverSpec("front", "Jewel Case Front — 120 × 120 mm", 120.0, 120.0),
     CoverSpec("back", "Jewel Case Back — 151 × 118 mm", 151.0, 118.0, (6.0, 145.0)),
-    CoverSpec("front_back", "Front + Back — 271 × 120 mm", 271.0, 120.0, (120.0,)),
     CoverSpec("booklet", "Folded Booklet — 240 × 120 mm", 240.0, 120.0, (120.0,)),
 )
 
@@ -159,74 +158,73 @@ class CoverTextItem(QtWidgets.QGraphicsTextItem):
             QtWidgets.QGraphicsItem.GraphicsItemFlag.ItemIsMovable
             | QtWidgets.QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
             | QtWidgets.QGraphicsItem.GraphicsItemFlag.ItemIsFocusable
+            | QtWidgets.QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges
         )
         self.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextEditorInteraction)
         self.setDefaultTextColor(QtGui.QColor("#111820"))
         self.setZValue(10)
-        self.setFont(QtGui.QFont("Arial", 14))
-
-
-class BackgroundImageItem(QtWidgets.QGraphicsPixmapItem):
-    """Movable image layer clipped conceptually to the 120 mm cover area."""
-
-    def __init__(self, pixmap: QtGui.QPixmap) -> None:
-        normalized = pixmap.scaled(
-            1200,
-            1200,
-            QtCore.Qt.AspectRatioMode.KeepAspectRatio,
-            QtCore.Qt.TransformationMode.SmoothTransformation,
+        font = QtGui.QFont("Arial", 10)
+        self.setFont(font)
+        self.setTextWidth(120.0)
+        cursor = self.textCursor()
+        cursor.select(QtGui.QTextCursor.SelectionType.Document)
+        char_format = QtGui.QTextCharFormat()
+        char_format.setFont(font)
+        block_format = QtGui.QTextBlockFormat()
+        block_format.setAlignment(QtCore.Qt.AlignmentFlag.AlignHCenter)
+        block_format.setLineHeight(
+            100.0,
+            QtGui.QTextBlockFormat.LineHeightTypes.ProportionalHeight.value,
         )
-        super().__init__(normalized)
-        self.setFlags(
-            QtWidgets.QGraphicsItem.GraphicsItemFlag.ItemIsMovable
-            | QtWidgets.QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
-        )
-        self.setTransformationMode(QtCore.Qt.TransformationMode.SmoothTransformation)
-        self.setZValue(-500)
-        self.setOpacity(1.0)
-        self.setTransformOriginPoint(QtCore.QPointF(0, 0))
-        self.scale_x = 1.0
-        self.scale_y = 1.0
-        self.size_mode = "cover"
-        self.rotation_preset = 0
-        self.apply_size_mode()
+        cursor.setBlockFormat(block_format)
+        cursor.setCharFormat(char_format)
+        self.setTextCursor(cursor)
+        cursor.clearSelection()
+        self.setTextCursor(cursor)
+        self.setTransformOriginPoint(self.boundingRect().center())
 
-    def apply_size_mode(self, mode: Optional[str] = None) -> None:
-        """Apply a CSS-like size mode while preserving the original image."""
-        if mode is not None:
-            self.size_mode = mode
-        width = max(1.0, float(self.pixmap().width()))
-        height = max(1.0, float(self.pixmap().height()))
-        if self.size_mode == "cover":
-            scale_x = scale_y = max(cover_width() / width, cover_height() / height)
-        elif self.size_mode == "contain":
-            scale_x = scale_y = min(cover_width() / width, cover_height() / height)
-        elif self.size_mode == "stretch":
-            scale_x = cover_width() / width
-            scale_y = cover_height() / height
-        else:  # auto: use the application's 10 px/mm editing convention.
-            scale_x = scale_y = 0.1
-        self.scale_x = scale_x
-        self.scale_y = scale_y
-        self._apply_transform()
+    def set_text_color(self, color: QtGui.QColor) -> None:
+        """Apply a color to all existing and subsequently edited text."""
+        self.setDefaultTextColor(color)
+        cursor = self.textCursor()
+        if not cursor.hasSelection():
+            cursor.select(QtGui.QTextCursor.SelectionType.Document)
+        format_ = QtGui.QTextCharFormat()
+        format_.setForeground(color)
+        cursor.setCharFormat(format_)
+        self.setTextCursor(cursor)
+        cursor.clearSelection()
+        self.setTextCursor(cursor)
 
-    def _apply_transform(self) -> None:
-        """Scale and rotate around the centre of the 120 mm cover."""
-        center = QtCore.QRectF(self.pixmap().rect()).center()
-        radians = math.radians(self.rotation_preset)
-        cosine, sine = math.cos(radians), math.sin(radians)
-        m11 = self.scale_x * cosine
-        m12 = self.scale_x * sine
-        m21 = -self.scale_y * sine
-        m22 = self.scale_y * cosine
-        dx = cover_width() / 2 - m11 * center.x() - m21 * center.y()
-        dy = cover_height() / 2 - m12 * center.x() - m22 * center.y()
-        self.setTransform(QtGui.QTransform(m11, m12, m21, m22, dx, dy), combine=False)
+    def itemChange(
+        self,
+        change: QtWidgets.QGraphicsItem.GraphicsItemChange,
+        value: object,
+    ) -> object:
+        """Snap normal text movement to the five millimetre grid."""
+        if (
+            change == QtWidgets.QGraphicsItem.GraphicsItemChange.ItemPositionChange
+            and self.scene() is not None
+            and getattr(self.scene(), "snap_to_guides", False)
+        ):
+            position = value
+            if isinstance(position, QtCore.QPointF):
+                snap = getattr(self.scene(), "snap_position", None)
+                if callable(snap):
+                    return snap(self, position)
+        return super().itemChange(change, value)
 
-    def set_rotation_preset(self, angle: int) -> None:
-        """Set one of the supported background rotation presets."""
-        self.rotation_preset = angle
-        self._apply_transform()
+    def set_text_font(self, font: QtGui.QFont) -> None:
+        """Apply a font to selected text or to the complete text block."""
+        cursor = self.textCursor()
+        if not cursor.hasSelection():
+            cursor.select(QtGui.QTextCursor.SelectionType.Document)
+        format_ = QtGui.QTextCharFormat()
+        format_.setFont(font)
+        cursor.mergeCharFormat(format_)
+        cursor.clearSelection()
+        self.setTextCursor(cursor)
+        self.setTransformOriginPoint(self.boundingRect().center())
 
 
 class ImageHandleItem(QtWidgets.QGraphicsObject):
@@ -351,6 +349,17 @@ class CoverImageItem(QtWidgets.QGraphicsPixmapItem):
         value: object,
     ) -> object:
         """Keep child handles synchronized with the owner's selection state."""
+        if (
+            change == QtWidgets.QGraphicsItem.GraphicsItemChange.ItemPositionChange
+            and self.scene() is not None
+            and getattr(self.scene(), "snap_to_guides", False)
+            and self._mouse_mode is None
+        ):
+            position = value
+            if isinstance(position, QtCore.QPointF):
+                snap = getattr(self.scene(), "snap_position", None)
+                if callable(snap):
+                    value = snap(self, position)
         result = super().itemChange(change, value)
         if change == QtWidgets.QGraphicsItem.GraphicsItemChange.ItemSelectedHasChanged:
             selected = bool(value)
@@ -560,6 +569,7 @@ class CoverImageItem(QtWidgets.QGraphicsPixmapItem):
         """Apply a handle movement using the transform captured at mouse-down."""
         if isinstance(self._mouse_mode, tuple) and self._mouse_mode[0] == "resize":
             index = self._mouse_mode[1]
+            scene_pos = self._snap_resize_position(scene_pos)
             # Convert the cursor with the transform captured at mouse-down.
             # Reusing the changing transform here causes visible resize jitter.
             current = self._resize_start_inverse.map(scene_pos)
@@ -626,13 +636,46 @@ class CoverImageItem(QtWidgets.QGraphicsPixmapItem):
         if self._mouse_mode == "rotate":
             center = self.mapToScene(QtCore.QRectF(self.pixmap().rect()).center())
             angle = math.atan2(scene_pos.y() - center.y(), scene_pos.x() - center.x())
-            self._apply_transform(
-                self._mouse_start_rotation + math.degrees(angle - self._mouse_start_angle)
-            )
+            rotation = self._mouse_start_rotation + math.degrees(angle - self._mouse_start_angle)
+            snapped_rotation = self._snap_rotation(rotation)
+            self._apply_transform(snapped_rotation)
+            if isinstance(self, BackgroundImageItem):
+                normalized = snapped_rotation % 360.0
+                self.rotation_preset = (
+                    int(normalized)
+                    if normalized in (0.0, 90.0, 180.0, 270.0)
+                    else -1
+                )
             self._update_handle_positions()
             self.scene().invalidate(self.sceneBoundingRect(), QtWidgets.QGraphicsScene.SceneLayer.AllLayers)
             self.update()
             return
+
+    def _snap_resize_position(self, position: QtCore.QPointF) -> QtCore.QPointF:
+        """Snap the resize cursor to the nearest main vertical and horizontal guide."""
+        scene = self.scene()
+        if scene is None or not getattr(scene, "snap_to_guides", False):
+            return position
+        guides_x, guides_y = getattr(scene, "snap_guides", ((), ()))
+
+        def snap(value: float, guides: tuple[float, ...]) -> float:
+            nearest = min(guides, key=lambda guide: abs(guide - value), default=value)
+            return nearest if abs(nearest - value) <= 2.0 else value
+
+        return QtCore.QPointF(snap(position.x(), guides_x), snap(position.y(), guides_y))
+
+    def _snap_rotation(self, angle: float) -> float:
+        """Snap rotation to the background rotation presets when close to one."""
+        scene = self.scene()
+        if scene is None or not getattr(scene, "snap_to_guides", False):
+            return angle
+        presets = (0.0, 90.0, 180.0, 270.0, 360.0)
+        normalized = angle % 360.0
+        nearest = min(presets, key=lambda preset: abs(preset - normalized))
+        distance = abs(nearest - normalized)
+        if distance > 5.0:
+            return angle
+        return angle + (nearest - normalized)
 
     def mouseMoveEvent(self, event: QtWidgets.QGraphicsSceneMouseEvent) -> None:
         """Move the image normally when no dedicated handle is active."""
@@ -666,8 +709,66 @@ class CoverImageItem(QtWidgets.QGraphicsPixmapItem):
         self._update_handle_positions()
 
 
+class BackgroundImageItem(CoverImageItem):
+    """Background image with the same mouse resize and rotation handles as artwork."""
+
+    def __init__(self, pixmap: QtGui.QPixmap) -> None:
+        self.size_mode = "cover"
+        self.rotation_preset = 0
+        self.reference_scale_x = 1.0
+        self.reference_scale_y = 1.0
+        super().__init__(pixmap)
+        self.setZValue(-500)
+        self.setOpacity(1.0)
+        self.apply_size_mode()
+
+    def apply_size_mode(self, mode: Optional[str] = None) -> None:
+        """Apply a CSS-like baseline size while preserving mouse-adjusted transforms."""
+        if mode is not None:
+            self.size_mode = mode
+        width = max(1.0, float(self.pixmap().width()))
+        height = max(1.0, float(self.pixmap().height()))
+        if self.size_mode == "cover":
+            scale_x = scale_y = max(cover_width() / width, cover_height() / height)
+        elif self.size_mode == "contain":
+            scale_x = scale_y = min(cover_width() / width, cover_height() / height)
+        elif self.size_mode == "stretch":
+            scale_x = cover_width() / width
+            scale_y = cover_height() / height
+        else:
+            raise ValueError(f"Unsupported background size mode: {self.size_mode}")
+        self.scale_x = scale_x
+        self.scale_y = scale_y
+        self.reference_scale_x = scale_x
+        self.reference_scale_y = scale_y
+        self._apply_transform()
+        self._update_handle_positions()
+
+    def _apply_transform(self, angle: Optional[float] = None) -> None:
+        """Apply the transform while keeping the background centred on the cover."""
+        if angle is not None:
+            self._rotation_angle = angle
+        center = QtCore.QRectF(self.pixmap().rect()).center()
+        radians = math.radians(self._rotation_angle)
+        cosine, sine = math.cos(radians), math.sin(radians)
+        m11 = self.scale_x * cosine
+        m12 = self.scale_x * sine
+        m21 = -self.scale_y * sine
+        m22 = self.scale_y * cosine
+        dx = cover_width() / 2 - m11 * center.x() - m21 * center.y()
+        dy = cover_height() / 2 - m12 * center.x() - m22 * center.y()
+        self.setTransform(QtGui.QTransform(m11, m12, m21, m22, dx, dy), combine=False)
+
+    def set_rotation_preset(self, angle: int) -> None:
+        """Set one of the supported background rotation presets."""
+        self.rotation_preset = angle % 360
+        self._rotation_angle = float(angle)
+        self._apply_transform()
+        self._update_handle_positions()
+
+
 class CoverGraphicsView(QtWidgets.QGraphicsView):
-    """Graphics view with image paste, drag-and-drop, and grid snapping."""
+    """Graphics view with standard clipboard paste, drag-and-drop, and snapping."""
 
     imageDropped = QtCore.Signal(str)
     imagePasted = QtCore.Signal(QtGui.QPixmap)
@@ -764,18 +865,25 @@ class MainWindow(QtWidgets.QMainWindow):
 
     MAX_IMAGE_PIXELS = 2400
     FILE_DIRECTORY_KEY = "last-file-directory"
+    VIEW_MARGIN_MM = 12.0
 
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("CD Cover Print")
-        self.resize(1200, 780)
+        self.resize(1350, 860)
         self.cover_spec = COVER_SPECS[0]
+        global ACTIVE_COVER_WIDTH_MM, ACTIVE_COVER_HEIGHT_MM
+        ACTIVE_COVER_WIDTH_MM = self.cover_spec.width_mm
+        ACTIVE_COVER_HEIGHT_MM = self.cover_spec.height_mm
         self.scene = QtWidgets.QGraphicsScene(
             -BLEED_MM,
             -BLEED_MM,
             cover_width() + 2 * BLEED_MM,
             cover_height() + 2 * BLEED_MM,
         )
+        self.scene.snap_to_guides = True
+        self.scene.snap_position = self._snap_item_position
+        self.scene.snap_guides = self._build_snap_guides()
         self.grid_item = GridItem(self.scene.sceneRect())
         self.frame_item = CoverFrameItem()
         self.frame_item.set_spec(self.cover_spec)
@@ -787,8 +895,19 @@ class MainWindow(QtWidgets.QMainWindow):
         self.view.imagePasted.connect(self.add_image_from_pixmap)
         self.view.deleteRequested.connect(self.delete_selected)
         self.scene.selectionChanged.connect(self.update_controls)
+        self.scene.focusItemChanged.connect(
+            lambda _new_item, _old_item, _reason: self.update_controls()
+        )
+        self.scene.changed.connect(
+            lambda _regions: QtCore.QTimer.singleShot(0, self.update_controls)
+        )
         self._build_ui()
-        self.view.fitInView(self.scene.sceneRect(), QtCore.Qt.AspectRatioMode.KeepAspectRatio)
+        QtCore.QTimer.singleShot(0, self._fit_scene_with_margin)
+
+    def showEvent(self, event: QtGui.QShowEvent) -> None:
+        """Apply the fixed canvas zoom after the window has its final size."""
+        super().showEvent(event)
+        QtCore.QTimer.singleShot(0, self._fit_scene_with_margin)
 
     def _build_ui(self) -> None:
         """Construct the sidebar and central canvas."""
@@ -811,23 +930,21 @@ class MainWindow(QtWidgets.QMainWindow):
         add_image.clicked.connect(self.choose_image)
         add_background = QtWidgets.QPushButton("Add Background")
         add_background.clicked.connect(self.choose_background)
-        remove_background = QtWidgets.QPushButton("Remove Background")
-        remove_background.clicked.connect(self.remove_background)
-        paste_image = QtWidgets.QPushButton("Paste Image (Ctrl+V)")
-        paste_image.clicked.connect(self.paste_image)
+        preview_button = QtWidgets.QPushButton("Print Preview")
+        preview_button.clicked.connect(self.preview_print)
         export_pdf = QtWidgets.QPushButton("Export PDF")
         export_pdf.clicked.connect(self.export_pdf)
         print_button = QtWidgets.QPushButton("Print")
         print_button.clicked.connect(self.print_cover)
-        for button in (add_text, add_image, add_background, remove_background, paste_image, export_pdf, print_button):
+        for button in (add_image, add_background, add_text, export_pdf, print_button, preview_button):
             side.addWidget(button)
-        side.addSpacing(12)
+        side.addSpacing(16)
         side.addWidget(QtWidgets.QLabel("Selected element"))
         form = QtWidgets.QFormLayout()
         self.x_spin = QtWidgets.QDoubleSpinBox()
         self.y_spin = QtWidgets.QDoubleSpinBox()
         for spin in (self.x_spin, self.y_spin):
-            spin.setRange(-BLEED_MM, max(cover_width(), cover_height()) + BLEED_MM)
+            spin.setRange(-10000.0, 10000.0)
             spin.setDecimals(2)
             spin.setSuffix(" mm")
         self.x_spin.valueChanged.connect(self.move_selected)
@@ -835,7 +952,7 @@ class MainWindow(QtWidgets.QMainWindow):
         form.addRow("X:", self.x_spin)
         form.addRow("Y:", self.y_spin)
         self.scale_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
-        self.scale_slider.setRange(10, 500)
+        self.scale_slider.setRange(10, 300)
         self.scale_slider.setValue(100)
         self.scale_slider.valueChanged.connect(self.scale_selected)
         form.addRow("Scale:", self.scale_slider)
@@ -846,11 +963,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.rotation_spin.valueChanged.connect(self.rotate_selected)
         form.addRow("Rotation:", self.rotation_spin)
         side.addLayout(form)
+        side.addSpacing(10)
         side.addWidget(QtWidgets.QLabel("Background size"))
         self.background_size_combo = QtWidgets.QComboBox()
         self.background_size_combo.addItem("Cover", "cover")
         self.background_size_combo.addItem("Contain", "contain")
-        self.background_size_combo.addItem("Auto", "auto")
         self.background_size_combo.addItem("100% x 100%", "stretch")
         self.background_size_combo.activated.connect(self.set_background_size_mode)
         side.addWidget(self.background_size_combo)
@@ -862,31 +979,27 @@ class MainWindow(QtWidgets.QMainWindow):
         self.background_size_combo.setEnabled(False)
         self.background_rotation_combo.setEnabled(False)
         side.addWidget(self.background_rotation_combo)
+        side.addSpacing(10)
         self.font_button = QtWidgets.QPushButton("Choose Font")
         self.font_button.clicked.connect(self.choose_font)
         side.addWidget(self.font_button)
+        self.text_color_button = QtWidgets.QPushButton("Choose Text Color")
+        self.text_color_button.clicked.connect(self.choose_text_color)
+        side.addWidget(self.text_color_button)
         front = QtWidgets.QPushButton("Bring to Front")
         front.clicked.connect(lambda: self.change_layer(1))
         back = QtWidgets.QPushButton("Send to Back")
         back.clicked.connect(lambda: self.change_layer(-1))
         side.addWidget(front)
         side.addWidget(back)
-        self.snap_check = QtWidgets.QCheckBox("Snap to 5 mm grid")
+        side.addSpacing(10)
+        self.snap_check = QtWidgets.QCheckBox("Snap to guides")
         self.snap_check.setChecked(True)
         self.snap_check.toggled.connect(self.set_snap)
         side.addWidget(self.snap_check)
         self.aspect_check = QtWidgets.QCheckBox("Lock image proportions")
         self.aspect_check.toggled.connect(self.set_aspect_lock)
         side.addWidget(self.aspect_check)
-        instructions = QtWidgets.QLabel(
-            "Image controls:\n"
-            "Drag — move\n"
-            "Square handles — resize width/height\n"
-            "Round handle — rotate\n"
-            "Ctrl + drag — temporary proportion lock"
-        )
-        instructions.setStyleSheet("color: #5f6b76; padding-top: 8px;")
-        side.addWidget(instructions)
         side.addStretch()
         layout.addWidget(sidebar)
         self.setCentralWidget(central)
@@ -911,16 +1024,74 @@ class MainWindow(QtWidgets.QMainWindow):
         self.grid_item._rect = self.scene.sceneRect()
         self.grid_item.update()
         self.frame_item.set_spec(spec)
+        self.scene.snap_guides = self._build_snap_guides()
         if self.background_item is not None:
             self.background_item.apply_size_mode()
-        self.view.fitInView(self.scene.sceneRect(), QtCore.Qt.AspectRatioMode.KeepAspectRatio)
+        self._fit_scene_with_margin()
         self.view.viewport().update()
         self.statusBar().showMessage(f"Cover type: {spec.label}")
 
+    def _fit_scene_with_margin(self) -> None:
+        """Use one zoom for every cover while reserving the safe-area margin."""
+        reference_width = max(spec.width_mm for spec in COVER_SPECS) + 2 * BLEED_MM
+        reference_height = max(spec.height_mm for spec in COVER_SPECS) + 2 * BLEED_MM
+        reference_rect = QtCore.QRectF(
+            0.0,
+            0.0,
+            reference_width + 2 * self.VIEW_MARGIN_MM,
+            reference_height + 2 * self.VIEW_MARGIN_MM,
+        )
+        self.view.fitInView(reference_rect, QtCore.Qt.AspectRatioMode.KeepAspectRatio)
+        self.view.centerOn(self.scene.sceneRect().center())
+
+    def _build_snap_guides(self) -> tuple[tuple[float, ...], tuple[float, ...]]:
+        """Return vertical and horizontal snap guides in scene millimetres."""
+        vertical = [-BLEED_MM, 0.0, cover_width() / 2.0, cover_width(), cover_width() + BLEED_MM]
+        vertical += list(self.cover_spec.guides)
+        horizontal = [-BLEED_MM, 0.0, cover_height() / 2.0, cover_height(), cover_height() + BLEED_MM]
+        return tuple(sorted(set(vertical))), tuple(sorted(set(horizontal)))
+
+    def _snap_item_position(
+        self,
+        item: QtWidgets.QGraphicsItem,
+        position: QtCore.QPointF,
+    ) -> QtCore.QPointF:
+        """Snap item edges or centre to the nearest main guide."""
+        if item.parentItem() is not None:
+            return position
+        current = item.pos()
+        rect = item.sceneBoundingRect().translated(position - current)
+        x_features = (rect.left(), rect.center().x(), rect.right())
+        y_features = (rect.top(), rect.center().y(), rect.bottom())
+        threshold = 2.0
+
+        def correction(features: tuple[float, ...], guides: tuple[float, ...]) -> float:
+            matches = [
+                guide - feature
+                for feature in features
+                for guide in guides
+                if abs(guide - feature) <= threshold
+            ]
+            return min(matches, key=abs) if matches else 0.0
+
+        return QtCore.QPointF(
+            position.x() + correction(x_features, self.scene.snap_guides[0]),
+            position.y() + correction(y_features, self.scene.snap_guides[1]),
+        )
+
     def selected_item(self) -> Optional[QtWidgets.QGraphicsItem]:
         """Return the first editable selected item."""
+        focused = self.scene.focusItem()
+        if isinstance(focused, (CoverTextItem, CoverImageItem, BackgroundImageItem)):
+            return focused
         selected = self.scene.selectedItems()
-        return selected[0] if selected else None
+        for item in selected:
+            if isinstance(item, (CoverTextItem, CoverImageItem, BackgroundImageItem)):
+                return item
+        active_item = getattr(self, "_active_item", None)
+        if active_item is not None and active_item.scene() is self.scene:
+            return active_item
+        return None
 
     def _file_dialog_directory(self) -> str:
         """Return the last directory used by any file dialog."""
@@ -947,7 +1118,10 @@ class MainWindow(QtWidgets.QMainWindow):
         """Insert a starter text item into the cover."""
         item = CoverTextItem("Album Title")
         self.scene.addItem(item)
-        item.setPos(15, 15)
+        item.setPos(
+            (cover_width() - item.boundingRect().width()) / 2.0,
+            15.0,
+        )
         item.setSelected(True)
         self.view.ensureVisible(item)
 
@@ -992,9 +1166,13 @@ class MainWindow(QtWidgets.QMainWindow):
     def set_background_pixmap(self, pixmap: QtGui.QPixmap) -> None:
         """Replace the current background and keep it behind all artwork."""
         if self.background_item is not None:
+            for handle in self.background_item._handles:
+                handle.setVisible(False)
+                self.scene.removeItem(handle)
             self.scene.removeItem(self.background_item)
         self.background_item = BackgroundImageItem(pixmap)
         self.scene.addItem(self.background_item)
+        self.background_item.detach_handles()
         self.background_item.setPos(0, 0)
         self.scene.clearSelection()
         self.background_item.setSelected(True)
@@ -1005,12 +1183,25 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def remove_background(self) -> None:
         """Remove the installed background image, if one exists."""
-        if self.background_item is None:
+        item = self.background_item
+        if item is None:
             return
-        self.scene.removeItem(self.background_item)
+        old_rect = item.sceneBoundingRect()
+        for handle in item._handles:
+            handle.setVisible(False)
+            self.scene.removeItem(handle)
+        item.setVisible(False)
+        self.scene.removeItem(item)
         self.background_item = None
         self.scene.clearSelection()
+        self._refresh_scene_region(old_rect)
         self.statusBar().showMessage("Background image removed")
+
+    def _refresh_scene_region(self, region: QtCore.QRectF) -> None:
+        """Immediately repaint an area after removing a transformed item."""
+        self.scene.invalidate(region, QtWidgets.QGraphicsScene.SceneLayer.AllLayers)
+        self.scene.update(region)
+        self.view.viewport().update()
 
     def set_background_size_mode(self, _index: int = -1) -> None:
         """Apply the selected CSS-like background size mode."""
@@ -1024,7 +1215,10 @@ class MainWindow(QtWidgets.QMainWindow):
         """Apply the selected background rotation preset."""
         if self.background_item is None:
             return
-        angle = int(self.background_rotation_combo.currentData())
+        data = self.background_rotation_combo.currentData()
+        if data is None:
+            return
+        angle = int(data)
         self.background_item.set_rotation_preset(angle)
 
     def add_image_from_path(self, path: str) -> None:
@@ -1080,26 +1274,21 @@ class MainWindow(QtWidgets.QMainWindow):
     def delete_selected(self) -> None:
         """Remove the selected editable element from the scene."""
         item = self.selected_item()
-        if item is None or item in (self.grid_item, self.frame_item, self.background_item):
+        if item is None or item in (self.grid_item, self.frame_item):
+            return
+        if item is self.background_item:
+            self.remove_background()
             return
         if isinstance(item, CoverImageItem):
             for handle in item._handles:
+                handle.setVisible(False)
                 self.scene.removeItem(handle)
+        old_rect = item.sceneBoundingRect()
+        item.setVisible(False)
         self.scene.removeItem(item)
         del item
+        self._refresh_scene_region(old_rect)
         self.update_controls()
-
-    def paste_image(self) -> None:
-        """Insert an image currently stored in the system clipboard."""
-        clipboard = QtWidgets.QApplication.clipboard()
-        if clipboard is None or not clipboard.mimeData().hasImage():
-            QtWidgets.QMessageBox.information(
-                self,
-                "Paste image",
-                "Copy an image first, then use Ctrl+V or the Paste Image button.",
-            )
-            return
-        self.add_image_from_pixmap(QtGui.QPixmap.fromImage(clipboard.image()))
 
     def move_selected(self) -> None:
         """Apply sidebar coordinates to the selected item."""
@@ -1107,47 +1296,111 @@ class MainWindow(QtWidgets.QMainWindow):
         if item is None or not self.x_spin.isEnabled():
             return
         x, y = self.x_spin.value(), self.y_spin.value()
-        if self.view.snap_to_grid:
-            x, y = round(x / 5) * 5, round(y / 5) * 5
         item.setPos(x, y)
 
     def scale_selected(self, value: int) -> None:
         """Apply a relative scale to an image or text item."""
         item = self.selected_item()
-        if isinstance(item, CoverImageItem):
+        if item is None:
+            return
+        center_before = item.mapToScene(item.boundingRect().center())
+        if isinstance(item, BackgroundImageItem):
+            reference_scale = (item.reference_scale_x + item.reference_scale_y) / 2.0
+            if reference_scale <= 0:
+                return
+            ratio = value / 100.0
+            item.scale_x = item.reference_scale_x * ratio
+            item.scale_y = item.reference_scale_y * ratio
+            item._apply_transform()
+            item._update_handle_positions()
+        elif isinstance(item, CoverImageItem):
             item.set_user_scale(value / 100.0)
         elif isinstance(item, CoverTextItem):
             item.setScale(value / 100.0)
+        else:
+            return
+        center_after = item.mapToScene(item.boundingRect().center())
+        item.setPos(item.pos() + center_before - center_after)
 
     def rotate_selected(self, value: float) -> None:
         """Apply a rotation while preserving the item's aspect ratio."""
         item = self.selected_item()
         if isinstance(item, BackgroundImageItem):
-            item.set_rotation_preset(int(value) % 360)
+            item.set_rotation(value)
         elif item is not None:
             if isinstance(item, CoverImageItem):
                 item.set_rotation(value)
             else:
+                center_before = item.mapToScene(item.boundingRect().center())
+                item.setTransformOriginPoint(item.boundingRect().center())
                 item.setRotation(value)
+                center_after = item.mapToScene(item.boundingRect().center())
+                item.setPos(item.pos() + center_before - center_after)
 
     def choose_font(self) -> None:
         """Choose and apply a font to selected text."""
         item = self.selected_item()
         if not isinstance(item, CoverTextItem):
             return
-        font, accepted = QtWidgets.QFontDialog.getFont(item.font(), self, "Choose text font")
+        original_font = item.font()
+        original_html = item.toHtml()
+        dialog = QtWidgets.QFontDialog(original_font, self)
+        dialog.setWindowTitle("Choose text font")
+        dialog.currentFontChanged.connect(item.set_text_font)
+        accepted = dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted
         if accepted:
-            item.setFont(font)
+            item.set_text_font(dialog.currentFont())
+        else:
+            item.setHtml(original_html)
+        cursor = item.textCursor()
+        cursor.clearSelection()
+        item.setTextCursor(cursor)
+        if accepted:
+            item.setSelected(True)
+            self.scene.setFocusItem(item)
+            self.update_controls()
+
+    def choose_text_color(self) -> None:
+        """Choose and apply a color to the selected text item."""
+        item = self.selected_item()
+        if not isinstance(item, CoverTextItem):
+            return
+        color = QtWidgets.QColorDialog.getColor(
+            item.defaultTextColor(),
+            self,
+            "Choose text color",
+        )
+        if color.isValid():
+            item.set_text_color(color)
+            item.setSelected(True)
+            self.scene.setFocusItem(item)
+            self.update_controls()
 
     def change_layer(self, direction: int) -> None:
         """Move the selected element above or below its neighbouring elements."""
         item = self.selected_item()
-        if item is not None:
-            item.setZValue(item.zValue() + direction)
+        if item is None or item in (self.grid_item, self.frame_item):
+            return
+        artwork_items = [
+            candidate
+            for candidate in self.scene.items()
+            if candidate not in (self.grid_item, self.frame_item)
+            and not isinstance(candidate, ImageHandleItem)
+        ]
+        if not artwork_items:
+            return
+        if direction > 0:
+            item.setZValue(max(candidate.zValue() for candidate in artwork_items) + 1.0)
+        else:
+            item.setZValue(min(candidate.zValue() for candidate in artwork_items) - 1.0)
+        item.setSelected(True)
+        self.scene.setFocusItem(item)
+        self.scene.update()
 
     def set_snap(self, enabled: bool) -> None:
-        """Enable or disable five millimetre snapping."""
+        """Enable or disable snapping to the main cover guides."""
         self.view.snap_to_grid = enabled
+        self.scene.snap_to_guides = enabled
 
     def set_aspect_lock(self, enabled: bool) -> None:
         """Enable or disable proportional image resizing."""
@@ -1158,6 +1411,8 @@ class MainWindow(QtWidgets.QMainWindow):
     def update_controls(self) -> None:
         """Refresh sidebar values from the selected item."""
         item = self.selected_item()
+        if item is not None:
+            self._active_item = item
         enabled = item is not None and item not in (self.grid_item, self.frame_item)
         self.x_spin.setEnabled(enabled)
         self.y_spin.setEnabled(enabled)
@@ -1168,6 +1423,7 @@ class MainWindow(QtWidgets.QMainWindow):
         has_background = isinstance(item, BackgroundImageItem)
         self.background_size_combo.setEnabled(has_background)
         self.background_rotation_combo.setEnabled(has_background)
+        self.text_color_button.setEnabled(isinstance(item, CoverTextItem))
         if not enabled:
             return
         blocker_x = QtCore.QSignalBlocker(self.x_spin)
@@ -1175,7 +1431,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.x_spin.setValue(item.pos().x())
         self.y_spin.setValue(item.pos().y())
         del blocker_x, blocker_y
-        if isinstance(item, CoverImageItem):
+        if isinstance(item, BackgroundImageItem):
+            blocker_scale = QtCore.QSignalBlocker(self.scale_slider)
+            reference_scale = (item.reference_scale_x + item.reference_scale_y) / 2.0
+            scale_percent = round(((item.scale_x + item.scale_y) / (2.0 * reference_scale)) * 100)
+            self.scale_slider.setValue(max(self.scale_slider.minimum(), min(self.scale_slider.maximum(), scale_percent)))
+            del blocker_scale
+        elif isinstance(item, CoverImageItem):
             blocker_aspect = QtCore.QSignalBlocker(self.aspect_check)
             self.aspect_check.setChecked(item.lock_aspect_ratio)
             del blocker_aspect
@@ -1191,7 +1453,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.rotation_spin.setValue(
             item.rotation_angle()
             if isinstance(item, CoverImageItem)
-            else item.rotation_preset
+            else item.rotation_angle()
             if isinstance(item, BackgroundImageItem)
             else item.rotation()
         )
@@ -1201,9 +1463,10 @@ class MainWindow(QtWidgets.QMainWindow):
             size_index = self.background_size_combo.findData(item.size_mode)
             if size_index >= 0:
                 self.background_size_combo.setCurrentIndex(size_index)
+            blocker_background_rotation = QtCore.QSignalBlocker(self.background_rotation_combo)
             rotation_index = self.background_rotation_combo.findData(item.rotation_preset)
-            if rotation_index >= 0:
-                self.background_rotation_combo.setCurrentIndex(rotation_index)
+            self.background_rotation_combo.setCurrentIndex(rotation_index if rotation_index >= 0 else -1)
+            del blocker_background_rotation
 
     def _configure_printer(self, printer: QtPrintSupport.QPrinter, output_path: Optional[str] = None) -> None:
         """Configure a printer for A4, 300 DPI output."""
@@ -1243,18 +1506,31 @@ class MainWindow(QtWidgets.QMainWindow):
         finally:
             painter.end()
 
+    def _render_printer_page(self, printer: QtPrintSupport.QPrinter) -> None:
+        """Render the current cover into a printer or preview paint device."""
+        painter = QtGui.QPainter(printer)
+        try:
+            page_rect = printer.pageRect(QtPrintSupport.QPrinter.Unit.DevicePixel)
+            CoverRenderer.render(self.scene, painter, page_rect)
+        finally:
+            painter.end()
+
+    def preview_print(self) -> None:
+        """Show the native print preview for the current cover."""
+        printer = QtPrintSupport.QPrinter(QtPrintSupport.QPrinter.PrinterMode.HighResolution)
+        self._configure_printer(printer)
+        preview = QtPrintSupport.QPrintPreviewDialog(printer, self)
+        preview.resize(self.size())
+        preview.paintRequested.connect(self._render_printer_page)
+        preview.exec()
+
     def print_cover(self) -> None:
         """Open the native system print dialog and print the cover."""
         printer = QtPrintSupport.QPrinter(QtPrintSupport.QPrinter.PrinterMode.HighResolution)
         self._configure_printer(printer)
         dialog = QtPrintSupport.QPrintDialog(printer, self)
         if dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted:
-            painter = QtGui.QPainter(printer)
-            try:
-                page_rect = printer.pageRect(QtPrintSupport.QPrinter.Unit.DevicePixel)
-                CoverRenderer.render(self.scene, painter, page_rect)
-            finally:
-                painter.end()
+            self._render_printer_page(printer)
 
 
 def main() -> int:
