@@ -963,7 +963,12 @@ class CoverRenderer:
         page_rect: QtCore.QRectF,
         show_fold_guides: bool = False,
     ) -> None:
-        """Render the active cover, optionally including subtle fold guides."""
+        """Render the cover compactly in the printable A4 area.
+
+        The artwork keeps its exact physical size.  It is anchored to the
+        printable area's top-left corner instead of being centered, which
+        avoids unnecessary whitespace around the exported or printed layout.
+        """
         device = painter.device()
         if device is None:
             raise RuntimeError("The painter has no active paint device")
@@ -975,8 +980,8 @@ class CoverRenderer:
         artwork_height = cover_height() + 2 * BLEED_MM
         target_width = artwork_width * dpi_x / MM_PER_INCH
         target_height = artwork_height * dpi_y / MM_PER_INCH
-        x = page_rect.x() + (page_rect.width() - target_width) / 2
-        y = page_rect.y() + (page_rect.height() - target_height) / 2
+        x = page_rect.x()
+        y = page_rect.y()
         target = QtCore.QRectF(
             x, y, target_width, target_height
         )
@@ -1020,6 +1025,9 @@ class MainWindow(QtWidgets.QMainWindow):
             cover_width() + 2 * BLEED_MM,
             cover_height() + 2 * BLEED_MM,
         )
+        self._closing = False
+        self._scene_alive = True
+        self.scene.destroyed.connect(self._mark_scene_deleted)
         self.scene.snap_to_guides = True
         self.scene.suppress_snap = False
         self.scene.snap_position = self._snap_item_position
@@ -1044,6 +1052,17 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         self._build_ui()
         QtCore.QTimer.singleShot(0, self._fit_scene_with_margin)
+
+    @QtCore.Slot()
+    def _mark_scene_deleted(self) -> None:
+        """Prevent deferred UI refreshes from touching a deleted scene."""
+        self._scene_alive = False
+
+    def closeEvent(self, event: QtGui.QCloseEvent) -> None:
+        """Stop deferred scene updates before Qt tears down the window."""
+        self._closing = True
+        self._scene_alive = False
+        super().closeEvent(event)
 
     def showEvent(self, event: QtGui.QShowEvent) -> None:
         """Apply the fixed canvas zoom after the window has its final size."""
@@ -1234,6 +1253,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def selected_item(self) -> Optional[QtWidgets.QGraphicsItem]:
         """Return the first editable selected item."""
+        if self._closing or not self._scene_alive:
+            return None
         focused = self.scene.focusItem()
         if isinstance(focused, (CoverTextItem, CoverImageItem, BackgroundImageItem)):
             return focused
@@ -1585,6 +1606,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def update_controls(self) -> None:
         """Refresh sidebar values from the selected item."""
+        if self._closing or not self._scene_alive:
+            return
         item = self.selected_item()
         if item is not None:
             self._active_item = item
