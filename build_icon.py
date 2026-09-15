@@ -4,7 +4,7 @@ from pathlib import Path
 
 from PySide6 import QtWidgets
 
-from main import create_application_icon
+from src.icon import create_application_icon
 
 
 app = QtWidgets.QApplication([])
