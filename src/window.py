@@ -84,12 +84,13 @@ class MainWindow(QtWidgets.QMainWindow):
         set_active_cover_size(self.cover_spec.width_mm, self.cover_spec.height_mm)
         self._closing = False
         self._scene_alive = True
+        self._initial_fit_done = False
         self.background_item: Optional[BackgroundImageItem] = None
         self._active_item: Optional[QtWidgets.QGraphicsItem] = None
         self._init_scene()
         self._init_view()
         self._build_ui()
-        QtCore.QTimer.singleShot(0, self._fit_scene_with_margin)
+        QtCore.QTimer.singleShot(0, self._fit_scene_once)
 
     def _init_scene(self) -> None:
         """Create the millimetre scene, grid, and cut-line overlay."""
@@ -137,9 +138,9 @@ class MainWindow(QtWidgets.QMainWindow):
         super().closeEvent(event)
 
     def showEvent(self, event: QtGui.QShowEvent) -> None:
-        """Apply the fixed canvas zoom after the window has its final size."""
+        """Apply the initial canvas zoom after the window has its final size."""
         super().showEvent(event)
-        QtCore.QTimer.singleShot(0, self._fit_scene_with_margin)
+        QtCore.QTimer.singleShot(0, self._fit_scene_once)
 
     def _build_ui(self) -> None:
         """Construct the sidebar and central canvas."""
@@ -314,6 +315,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.statusBar().showMessage(
             f"Print area: {self.frame_item.width_mm:.1f} × {self.frame_item.height_mm:.1f} mm"
         )
+
+    def _fit_scene_once(self) -> None:
+        """Fit the canvas only on first display so minimize/restore keeps the zoom."""
+        if self._initial_fit_done:
+            return
+        self._initial_fit_done = True
+        self._fit_scene_with_margin()
 
     def _fit_scene_with_margin(self) -> None:
         """Use one zoom for every cover while reserving the safe-area margin."""
