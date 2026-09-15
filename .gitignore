@@ -69,6 +69,9 @@ dmypy.json
 .pytype/
 .ruff_cache/
 
+# Transfer patches
+cd-cover-changes.patch
+
 # IDEs and Editors
 .idea/
 .vscode/
