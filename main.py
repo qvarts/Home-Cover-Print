@@ -33,24 +33,12 @@ class CoverSpec:
 
 
 COVER_SPECS = (
-    CoverSpec("front", "Jewel Case (Front) — 120 × 120 mm", 120.0, 120.0),
-    CoverSpec("booklet", "Jewel Case (Booklet) — 240 × 120 mm", 240.0, 120.0, (120.0,)),
-    CoverSpec("back", "Jewel Case (Back) — 150 × 118 mm", 150.0, 118.0, (6.0, 144.0)),
-    CoverSpec("slim", "Slim Case (Front) — 122 × 122 mm", 122.0, 122.0),
-    CoverSpec(
-        "slim_booklet_plain",
-        "Slim Case (Booklet) — 244 × 122 mm",
-        244.0,
-        122.0,
-        (122.0,),
-    ),
-    CoverSpec(
-        "slim_booklet",
-        "Slim Case (Folded) — 262 × 122 mm",
-        262.0,
-        122.0,
-        (4.0, 140.0),
-    ),
+  CoverSpec("front", "Front Cover (Jewel/Slim) — 120 × 120 mm", 120.0, 120.0),
+  CoverSpec("booklet", "Front Booklet (Jewel/Slim) — 240 × 120 mm", 240.0, 120.0, (120.0,)),
+  CoverSpec("back", "Back Inlay (Jewel) — 152 × 118 mm", 152.0, 118.0, (6.0, 146.0)),
+  CoverSpec("tray", "Tray Inlay (Jewel) — 152 × 118 mm", 152.0, 118.0, (6.0, 146.0)),
+  CoverSpec("ext_front", "Extended Front Cover (Slim) — 138 × 120 mm", 138.0, 120.0, (4.0, 18.0)),
+  CoverSpec("ext_booklet", "Extended Front Booklet (Slim) — 258 × 120 mm", 258.0, 120.0, (4.0, 18.0, 138.0)),
 )
 
 ACTIVE_COVER_WIDTH_MM = 120.0
@@ -169,6 +157,7 @@ class CoverFrameItem(QtWidgets.QGraphicsItem):
         self._width = cover_width()
         self._height = cover_height()
         self._guides: tuple[float, ...] = ()
+        self._spec: Optional[CoverSpec] = None
         self.show_guides = True
         self.fold_guide_opacity = 210
         # Keep the cut line visible over artwork while leaving resize handles
@@ -187,6 +176,7 @@ class CoverFrameItem(QtWidgets.QGraphicsItem):
     def set_spec(self, spec: CoverSpec) -> None:
         """Update the visible cut and fold guides for a cover format."""
         self.prepareGeometryChange()
+        self._spec = spec
         self._width = spec.width_mm
         self._height = spec.height_mm
         self._guides = spec.guides
@@ -203,7 +193,39 @@ class CoverFrameItem(QtWidgets.QGraphicsItem):
         painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
         cut_line_color = QtGui.QColor(127, 139, 152, 150)
         painter.setPen(QtGui.QPen(cut_line_color, 0.25, QtCore.Qt.PenStyle.DashLine))
-        painter.drawRect(QtCore.QRectF(0, 0, self._width, self._height))
+            
+        if self._spec and self._spec.key.startswith("ext_"):
+            # Manual drawing of boundary segments for Extended covers
+            # We use the guides to determine where the height reduction ends
+            edge_end = self._guides[0] if len(self._guides) > 0 else 0.0
+            flap_end = self._guides[1] if len(self._guides) > 1 else edge_end
+            
+            # top_y = 2.0, bot_y = height - 2.0
+            top_reduced_y = 2.0
+            bot_reduced_y = self._height - 2.0
+            
+            # Draw all segments as explicit line calls
+            # TOP boundary
+            painter.drawLine(QtCore.QPointF(0, top_reduced_y), QtCore.QPointF(flap_end, top_reduced_y))
+            painter.drawLine(QtCore.QPointF(flap_end, 0), QtCore.QPointF(self._width, 0))
+            
+            # BOTTOM boundary
+            painter.drawLine(QtCore.QPointF(0, bot_reduced_y), QtCore.QPointF(flap_end, bot_reduced_y))
+            painter.drawLine(QtCore.QPointF(flap_end, self._height), QtCore.QPointF(self._width, self._height))
+            
+            # LEFT boundary (between the reduced top/bottom)
+            painter.drawLine(QtCore.QPointF(0, top_reduced_y), QtCore.QPointF(0, bot_reduced_y))
+            
+            # RIGHT boundary (full height)
+            painter.drawLine(QtCore.QPointF(self._width, 0), QtCore.QPointF(self._width, self._height))
+            
+            # VERTICAL connectors at flap_end to close the gap between 0 and 2mm
+            painter.drawLine(QtCore.QPointF(flap_end, 0), QtCore.QPointF(flap_end, top_reduced_y))
+            painter.drawLine(QtCore.QPointF(flap_end, bot_reduced_y), QtCore.QPointF(flap_end, self._height))
+        else:
+            # Standard cover: draw the simple bounding rectangle
+            painter.drawRect(QtCore.QRectF(0, 0, self._width, self._height))
+        
         if self.show_guides:
             painter.setPen(
                 QtGui.QPen(
@@ -213,17 +235,12 @@ class CoverFrameItem(QtWidgets.QGraphicsItem):
                 )
             )
             for guide_x in self._guides:
-                painter.drawLine(QtCore.QPointF(guide_x, 0), QtCore.QPointF(guide_x, self._height))
-        mark = BLEED_MM
-        painter.setPen(QtGui.QPen(cut_line_color, 0.25, QtCore.Qt.PenStyle.DashLine))
-        for x, y, dx, dy in (
-            (0, 0, -mark, 0), (0, 0, 0, -mark),
-            (self._width, 0, mark, 0), (self._width, 0, 0, -mark),
-            (0, self._height, -mark, 0), (0, self._height, 0, mark),
-            (self._width, self._height, mark, 0),
-            (self._width, self._height, 0, mark),
-        ):
-            painter.drawLine(QtCore.QPointF(x, y), QtCore.QPointF(x + dx, y + dy))
+                # For Extended covers, truncate the fold guides to match the reduced height at the edges
+                if self._spec and self._spec.key.startswith("ext_") and guide_x < (self._guides[1] if len(self._guides) > 1 else 0.0):
+                    painter.drawLine(QtCore.QPointF(guide_x, 2.0), QtCore.QPointF(guide_x, self._height - 2.0))
+                else:
+                    painter.drawLine(QtCore.QPointF(guide_x, 0), QtCore.QPointF(guide_x, self._height))
+        
         painter.restore()
 
 
@@ -1075,7 +1092,7 @@ class MainWindow(QtWidgets.QMainWindow):
         layout = QtWidgets.QHBoxLayout(central)
         layout.addWidget(self.view, 1)
         sidebar = QtWidgets.QWidget()
-        sidebar.setFixedWidth(250)
+        sidebar.setFixedWidth(300)
         side = QtWidgets.QVBoxLayout(sidebar)
 
         side.addWidget(QtWidgets.QLabel("Cover type"))
@@ -1099,13 +1116,24 @@ class MainWindow(QtWidgets.QMainWindow):
         for button in (add_image, add_background, add_text, export_pdf, print_button, preview_button):
             side.addWidget(button)
         self.export_fold_guides_check = QtWidgets.QCheckBox(
-            "Print fold lines"
+          "Print fold lines"
         )
         self.export_fold_guides_check.setToolTip(
-            "When enabled, fold lines are included in PDF export, printing, and print preview."
+          "When enabled, fold lines are included in PDF export, printing, and print preview."
         )
         self.export_fold_guides_check.setChecked(True)
         side.addWidget(self.export_fold_guides_check)
+
+        self.add_bleed_margin_check = QtWidgets.QCheckBox(
+          "Expand cover size"
+        )
+        self.add_bleed_margin_check.setToolTip(
+          "Adds 1mm to each side of the main cover area."
+        )
+        self.add_bleed_margin_check.setChecked(False)
+        self.add_bleed_margin_check.toggled.connect(self.update_cover_dimensions)
+        side.addWidget(self.add_bleed_margin_check)
+
         side.addSpacing(16)
         side.addWidget(QtWidgets.QLabel("Selected element"))
         form = QtWidgets.QFormLayout()
@@ -1181,46 +1209,115 @@ class MainWindow(QtWidgets.QMainWindow):
         """Switch the active physical cover format without deleting artwork."""
         global ACTIVE_COVER_WIDTH_MM, ACTIVE_COVER_HEIGHT_MM
         if not 0 <= index < len(COVER_SPECS):
-            return
+          return
         spec = COVER_SPECS[index]
         self.cover_spec = spec
-        ACTIVE_COVER_WIDTH_MM = spec.width_mm
-        ACTIVE_COVER_HEIGHT_MM = spec.height_mm
+        
+        # IMPORTANT: The frame item must know its current spec for conditional painting
+        self.frame_item.set_spec(spec)
+        
+        self.update_cover_dimensions()
+        
+        # Sync global state for helper functions
+        ACTIVE_COVER_WIDTH_MM = self.frame_item._width
+        ACTIVE_COVER_HEIGHT_MM = self.frame_item._height
+        
+        self._update_status_dimensions()
+
+    def update_cover_dimensions(self) -> None:
+        """Recalculate cover size and guides based on spec and optional margins."""
+        spec = self.cover_spec
+        width = spec.width_mm
+        height = spec.height_mm
+        guides = list(spec.guides)
+
+        if self.add_bleed_margin_check.isChecked():  
+          # Let's define 'main_sections' based on the cover key.
+          main_sections = []
+          if spec.key in ("front", "booklet"):
+              # All sections are main areas.
+              main_sections = list(range(len(guides) + 1))
+          elif spec.key in ("back", "tray"):
+              # Back Inlay: Left Edge (0), Main (1), Right Edge (2).
+              main_sections = [1]
+          elif spec.key in ("ext_front", "ext_booklet"):
+              # Extended: Edge (0), Flap (1), [Main (2), Main (3) if booklet].
+              # Main areas start from index 2.
+              main_sections = list(range(2, len(guides) + 1))
+            
+          # Calculate total width increase.
+          # Each main section adds 2mm total (1mm left, 1mm right).
+          width += len(main_sections) * 2.0
+          height += 2.0
+            
+          # Shift guides to accommodate the expansion.
+          new_guides = []
+          for i in range(len(guides)):
+              # New position = Original position + (count of main sections among 0...i) * 2.0
+              count_main = sum(1 for j in range(i + 1) if j in main_sections)
+              new_guides.append(guides[i] + count_main * 2.0)
+                
+          guides = new_guides
+
         self.scene.setSceneRect(
-            -BLEED_MM,
-            -BLEED_MM,
-            spec.width_mm + 2 * BLEED_MM,
-            spec.height_mm + 2 * BLEED_MM,
+          -BLEED_MM,
+          -BLEED_MM,
+          width + 2 * BLEED_MM,
+          height + 2 * BLEED_MM,
         )
         self.grid_item.prepareGeometryChange()
         self.grid_item._rect = self.scene.sceneRect()
         self.grid_item.update()
-        self.frame_item.set_spec(spec)
-        self.scene.snap_guides = self._build_snap_guides()
+        
+        # Update the frame item
+        self.frame_item._width = width
+        self.frame_item._height = height
+        self.frame_item._guides = tuple(guides)
+        self.frame_item.update()
+        
+        # Update snap guides
+        self.scene.snap_guides = self._build_snap_guides(width, height, tuple(guides))
+        
         if self.background_item is not None:
-            self.background_item.apply_size_mode()
+          self.background_item.apply_size_mode()
+        
         self._fit_scene_with_margin()
         self.view.viewport().update()
-        self.statusBar().showMessage(f"Cover type: {spec.label}")
-
+        self._update_status_dimensions()
+  
+    def _update_status_dimensions(self) -> None:
+        """Update the status bar with current cover dimensions."""
+        w = self.frame_item._width
+        h = self.frame_item._height
+        self.statusBar().showMessage(f"Print area: {w:.1f} × {h:.1f} mm")
+  
     def _fit_scene_with_margin(self) -> None:
-        """Use one zoom for every cover while reserving the safe-area margin."""
-        reference_width = max(spec.width_mm for spec in COVER_SPECS) + 2 * BLEED_MM
-        reference_height = max(spec.height_mm for spec in COVER_SPECS) + 2 * BLEED_MM
-        reference_rect = QtCore.QRectF(
-            0.0,
-            0.0,
-            reference_width + 2 * self.VIEW_MARGIN_MM,
-            reference_height + 2 * self.VIEW_MARGIN_MM,
-        )
-        self.view.fitInView(reference_rect, QtCore.Qt.AspectRatioMode.KeepAspectRatio)
-        self.view.centerOn(self.scene.sceneRect().center())
+       """Use one zoom for every cover while reserving the safe-area margin."""
+       reference_width = max(s.width_mm for s in COVER_SPECS) + 2 * BLEED_MM
+       reference_height = max(s.height_mm for s in COVER_SPECS) + 2 * BLEED_MM
+       reference_rect = QtCore.QRectF(
+          0.0,
+          0.0,
+          reference_width + 2 * self.VIEW_MARGIN_MM,
+          reference_height + 2 * self.VIEW_MARGIN_MM,
+       )
+       self.view.fitInView(reference_rect, QtCore.Qt.AspectRatioMode.KeepAspectRatio)
+       self.view.centerOn(self.scene.sceneRect().center())
 
-    def _build_snap_guides(self) -> tuple[tuple[float, ...], tuple[float, ...]]:
+    def _build_snap_guides(
+        self,
+        width: Optional[float] = None,
+        height: Optional[float] = None,
+        guides: Optional[tuple[float, ...]] = None,
+    ) -> tuple[tuple[float, ...], tuple[float, ...]]:
         """Return vertical and horizontal snap guides in scene millimetres."""
-        vertical = [-BLEED_MM, 0.0, cover_width() / 2.0, cover_width(), cover_width() + BLEED_MM]
-        vertical += list(self.cover_spec.guides)
-        horizontal = [-BLEED_MM, 0.0, cover_height() / 2.0, cover_height(), cover_height() + BLEED_MM]
+        w = width if width is not None else cover_width()
+        h = height if height is not None else cover_height()
+        g = guides if guides is not None else self.cover_spec.guides
+        
+        vertical = [-BLEED_MM, 0.0, w / 2.0, w, w + BLEED_MM]
+        vertical += list(g)
+        horizontal = [-BLEED_MM, 0.0, h / 2.0, h, h + BLEED_MM]
         return tuple(sorted(set(vertical))), tuple(sorted(set(horizontal)))
 
     def _snap_item_position(
