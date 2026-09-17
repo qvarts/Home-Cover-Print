@@ -11,7 +11,11 @@ IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".gif"}
 
 
 class CoverGraphicsView(QtWidgets.QGraphicsView):
-    """Graphics view with clipboard paste, drag-and-drop, and snapping."""
+    """Graphics view with clipboard paste, drag-and-drop, snapping, and zoom."""
+
+    WHEEL_ZOOM_STEP = 1.2
+    DEFAULT_MIN_ZOOM = 0.05
+    MAX_ZOOM = 50.0
 
     imageDropped = QtCore.Signal(str)
     imagePasted = QtCore.Signal(QtGui.QPixmap)
@@ -25,6 +29,18 @@ class CoverGraphicsView(QtWidgets.QGraphicsView):
         self.setRenderHint(QtGui.QPainter.RenderHint.SmoothPixmapTransform)
         self.setDragMode(QtWidgets.QGraphicsView.DragMode.RubberBandDrag)
         self.snap_to_grid = True
+        # The lower bound is raised to the initial fit zoom once the window
+        # is shown, so the user can never zoom out past the startup view.
+        self.min_zoom = self.DEFAULT_MIN_ZOOM
+        self.max_zoom = self.MAX_ZOOM
+
+    def set_min_zoom(self, value: float) -> None:
+        """Raise the minimum zoom to a value such as the startup fit scale."""
+        if value <= 0:
+            return
+        self.min_zoom = value
+        if self.transform().m11() < value:
+            self.zoom_at(value / self.transform().m11())
 
     def dragEnterEvent(self, event: QtGui.QDragEnterEvent) -> None:
         if event.mimeData().hasUrls():
@@ -88,3 +104,28 @@ class CoverGraphicsView(QtWidgets.QGraphicsView):
         """Keep keyboard focus on the canvas after selecting an item."""
         self.setFocus(QtCore.Qt.FocusReason.MouseFocusReason)
         super().mousePressEvent(event)
+
+    def wheelEvent(self, event: QtGui.QWheelEvent) -> None:
+        """Zoom around the cursor while Ctrl is held, otherwise scroll normally."""
+        if not event.modifiers() & QtCore.Qt.KeyboardModifier.ControlModifier:
+            super().wheelEvent(event)
+            return
+        delta = event.angleDelta().y()
+        if delta == 0:
+            event.ignore()
+            return
+        self.zoom_at(self.WHEEL_ZOOM_STEP ** (delta / 120.0))
+        event.accept()
+
+    def zoom_at(self, factor: float) -> None:
+        """Scale the view by a factor, anchored under the mouse and clamped."""
+        current = self.transform().m11()
+        if current <= 0:
+            return
+        target = max(self.min_zoom, min(self.max_zoom, current * factor))
+        if target == current:
+            return
+        previous_anchor = self.transformationAnchor()
+        self.setTransformationAnchor(QtWidgets.QGraphicsView.ViewportAnchor.AnchorUnderMouse)
+        self.scale(target / current, target / current)
+        self.setTransformationAnchor(previous_anchor)

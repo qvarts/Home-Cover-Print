@@ -114,6 +114,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _init_view(self) -> None:
         """Wire the canvas signals that drive editor actions."""
         self.view = CoverGraphicsView(self.scene)
+        self.view.setToolTip("Ctrl + mouse wheel to zoom")
         self.view.imageDropped.connect(self.add_image_from_path)
         self.view.imagePasted.connect(self.add_image_from_pixmap)
         self.view.deleteRequested.connect(self.delete_selected)
@@ -335,6 +336,11 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         self.view.fitInView(reference_rect, QtCore.Qt.AspectRatioMode.KeepAspectRatio)
         self.view.centerOn(self.scene.sceneRect().center())
+        # Freeze the startup zoom: it becomes the zoom-out limit and the scale
+        # at which the grid keeps its on-screen size while zooming.
+        fit_scale = self.view.transform().m11()
+        self.view.set_min_zoom(fit_scale)
+        self.grid_item.set_reference_scale(fit_scale)
 
     def _build_snap_guides(
         self,

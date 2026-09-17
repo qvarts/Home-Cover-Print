@@ -33,12 +33,24 @@ MAX_SCALE_FACTOR = 20.0
 
 
 class GridItem(QtWidgets.QGraphicsItem):
-    """Non-selectable 5 mm editing grid drawn behind all artwork."""
+    """Non-selectable editing grid drawn behind all artwork.
+
+    The grid keeps a constant on-screen spacing: it counter-scales against the
+    view zoom so its lines neither grow nor shrink while the artwork is
+    magnified. One visible step always matches the step captured at the initial
+    fit scale, set through :meth:`set_reference_scale`.
+    """
+
+    # Grid phase as a fraction of one step. Offsetting the origin pushes the
+    # first line out of the left/top edge, so the pattern starts with a partial
+    # (cut-off) cell instead of a line flush against the cover boundary.
+    GRID_PHASE = 0.5
 
     def __init__(self, rect: QtCore.QRectF, step: float = 5.0) -> None:
         super().__init__()
         self._rect = rect
         self._step = step
+        self._reference_scale = 1.0
         self.setZValue(-1000)
         self.setAcceptedMouseButtons(QtCore.Qt.MouseButton.NoButton)
 
@@ -48,8 +60,41 @@ class GridItem(QtWidgets.QGraphicsItem):
         self._rect = rect
         self.update()
 
+    def set_reference_scale(self, scale: float) -> None:
+        """Set the view scale at which one grid step keeps its on-screen size."""
+        if scale <= 0 or scale == self._reference_scale:
+            return
+        self._reference_scale = scale
+        self.update()
+
     def boundingRect(self) -> QtCore.QRectF:
         return self._rect
+
+    def _screen_step(self, view_scale: float) -> float:
+        """Return the grid step in scene millimetres for a constant screen size."""
+        return self._step * self._reference_scale / view_scale
+
+    def _grid_origin(self, edge: float, step: float) -> float:
+        """Return a phase-shifted origin so the edge looks cut off.
+
+        The offset is a fraction of the counter-scaled step, which keeps it a
+        constant size on screen: the first line always sits ``(1 - GRID_PHASE)``
+        steps away from the left/top edge, whatever the zoom level is.
+        """
+        return edge - self.GRID_PHASE * step
+
+    def _grid_positions(self, origin: float, start: float, end: float, step: float) -> list[float]:
+        """Return aligned line positions that always stay inside the grid rect.
+
+        Lines are anchored to the rect origin and generated with ``ceil`` so the
+        counter-scaled step can never place a line outside the grid bounds.
+        """
+        positions = []
+        position = origin + math.ceil((start - origin) / step) * step
+        while position <= end:
+            positions.append(position)
+            position += step
+        return positions
 
     def paint(
         self,
@@ -57,23 +102,26 @@ class GridItem(QtWidgets.QGraphicsItem):
         option: QtWidgets.QStyleOptionGraphicsItem,
         widget: Optional[QtWidgets.QWidget] = None,
     ) -> None:
-        del option, widget
+        del widget
+        view_scale = option.levelOfDetailFromTransform(painter.worldTransform())
+        if view_scale <= 0:
+            return
+        step = self._screen_step(view_scale)
+        if step <= 0:
+            return
+        area = option.exposedRect.intersected(self._rect)
+        if area.isEmpty():
+            return
         painter.save()
         painter.setPen(QtGui.QPen(QtGui.QColor(225, 230, 235), 0))
-        x = self._rect.left()
-        while x <= self._rect.right():
-            painter.drawLine(
-                QtCore.QPointF(x, self._rect.top()),
-                QtCore.QPointF(x, self._rect.bottom()),
-            )
-            x += self._step
-        y = self._rect.top()
-        while y <= self._rect.bottom():
-            painter.drawLine(
-                QtCore.QPointF(self._rect.left(), y),
-                QtCore.QPointF(self._rect.right(), y),
-            )
-            y += self._step
+        for x in self._grid_positions(
+            self._grid_origin(self._rect.left(), step), area.left(), area.right(), step
+        ):
+            painter.drawLine(QtCore.QPointF(x, area.top()), QtCore.QPointF(x, area.bottom()))
+        for y in self._grid_positions(
+            self._grid_origin(self._rect.top(), step), area.top(), area.bottom(), step
+        ):
+            painter.drawLine(QtCore.QPointF(area.left(), y), QtCore.QPointF(area.right(), y))
         painter.restore()
 
 
@@ -82,7 +130,26 @@ class CoverFrameItem(QtWidgets.QGraphicsItem):
 
     The frame sits above artwork so the cut outline remains visible, but it
     does not accept mouse buttons so handles still receive clicks.
+
+    On screen the outlines use a cosmetic (1 device pixel) pen so they stay
+    crisp at every zoom level, matching the grid and selection handles. The
+    PDF and printer path keeps the physical 0.15 mm thickness and an explicit
+    dash step in millimetres, so the gap never closes up and the line reads as
+    dashed or dotted on paper. Anti-aliasing is disabled in both cases so the
+    lines render with hard edges.
     """
+
+    # Physical line thickness used for PDF export and printing.
+    PRINT_LINE_WIDTH_MM = 0.15
+    # Cosmetic pen width: always one device pixel on screen.
+    SCREEN_LINE_WIDTH = 0.0
+    # Dash and dot steps for printed lines, in millimetres. Qt expresses a dash
+    # pattern in multiples of the pen width, so the pattern would shrink with
+    # the thickness and the gaps would close up until the line looked solid.
+    # These lengths are converted to pen-width units in _print_pen, which keeps
+    # the visible dash step constant regardless of the line thickness.
+    CUT_DASH_MM = (1.2, 0.8)
+    FOLD_DOT_MM = (0.4, 0.8)
 
     def __init__(self) -> None:
         super().__init__()
@@ -150,18 +217,57 @@ class CoverFrameItem(QtWidgets.QGraphicsItem):
         option: QtWidgets.QStyleOptionGraphicsItem,
         widget: Optional[QtWidgets.QWidget] = None,
     ) -> None:
-        del option, widget
+        del option
+        # A widget is present only for on-screen painting; scene.render for PDF
+        # and printing passes no widget, so keep the physical thickness there.
+        on_screen = widget is not None
         painter.save()
         painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
-        cut_line_color = QtGui.QColor(127, 139, 152, 150)
-        painter.setPen(QtGui.QPen(cut_line_color, 0.25, QtCore.Qt.PenStyle.DashLine))
+        # The frame only draws straight cut and fold lines, so disabling
+        # anti-aliasing is safe and keeps them crisp everywhere: on screen the
+        # 1 px cosmetic pen stays a single pixel, and in PDF/printing the
+        # 0.15 mm line gets hard edges instead of a soft grey fringe. The hint
+        # is scoped by save()/restore() and never affects artwork items.
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, False)
+        painter.setPen(self._cut_line_pen(on_screen))
         if self._is_extended():
             self._paint_extended_cut_line(painter)
         else:
             painter.drawRect(QtCore.QRectF(0, 0, self._width, self._height))
         if self.show_guides:
-            self._paint_fold_guides(painter)
+            self._paint_fold_guides(painter, on_screen)
         painter.restore()
+
+    def _screen_pen(self, color: QtGui.QColor, style: QtCore.Qt.PenStyle) -> QtGui.QPen:
+        """Build a cosmetic pen that renders one crisp pixel at any zoom."""
+        pen = QtGui.QPen(color, self.SCREEN_LINE_WIDTH, style)
+        pen.setCosmetic(True)
+        return pen
+
+    def _print_pen(
+        self,
+        color: QtGui.QColor,
+        style: QtCore.Qt.PenStyle,
+        pattern_mm: tuple[float, float],
+    ) -> QtGui.QPen:
+        """Build a physical pen whose dash step is set in millimetres.
+
+        Qt measures the dash pattern in multiples of the pen width, so the
+        millimetre lengths are divided by the width here. The dash step then
+        stays the same on paper even if the line thickness is changed.
+        """
+        width = self.PRINT_LINE_WIDTH_MM
+        pen = QtGui.QPen(color, width, style)
+        if width > 0:
+            pen.setDashPattern([length / width for length in pattern_mm])
+        return pen
+
+    def _cut_line_pen(self, on_screen: bool) -> QtGui.QPen:
+        """Return the cut-line pen for the screen or the printed page."""
+        color = QtGui.QColor(127, 139, 152, 150)
+        if on_screen:
+            return self._screen_pen(color, QtCore.Qt.PenStyle.DashLine)
+        return self._print_pen(color, QtCore.Qt.PenStyle.DashLine, self.CUT_DASH_MM)
 
     def _paint_extended_cut_line(self, painter: QtGui.QPainter) -> None:
         """Draw the notched Slim-case outline (2 mm inset on the flap edge)."""
@@ -177,15 +283,16 @@ class CoverFrameItem(QtWidgets.QGraphicsItem):
         painter.drawLine(QtCore.QPointF(flap_end, 0), QtCore.QPointF(flap_end, top_reduced_y))
         painter.drawLine(QtCore.QPointF(flap_end, bot_reduced_y), QtCore.QPointF(flap_end, self._height))
 
-    def _paint_fold_guides(self, painter: QtGui.QPainter) -> None:
+    def _paint_fold_guides(self, painter: QtGui.QPainter, on_screen: bool) -> None:
         """Draw vertical dotted fold marks, truncated on the reduced-height flap."""
-        painter.setPen(
-            QtGui.QPen(
-                QtGui.QColor(127, 139, 152, self.fold_guide_opacity),
-                0.25,
-                QtCore.Qt.PenStyle.DotLine,
-            )
-        )
+        color = QtGui.QColor(127, 139, 152, self.fold_guide_opacity)
+        if on_screen:
+            painter.setPen(self._screen_pen(color, QtCore.Qt.PenStyle.DotLine))
+        else:
+            pen = self._print_pen(color, QtCore.Qt.PenStyle.DotLine, self.FOLD_DOT_MM)
+            # Round caps turn the short dash segments into visible dots.
+            pen.setCapStyle(QtCore.Qt.PenCapStyle.RoundCap)
+            painter.setPen(pen)
         flap_end = self._flap_end()
         for guide_x in self._guides:
             if self._is_extended() and guide_x < flap_end:
