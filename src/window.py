@@ -78,7 +78,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("CD Cover Print")
+        self.setWindowTitle("Home Cover Print")
         self.resize(1350, 860)
         self.cover_spec = COVER_SPECS[0]
         set_active_cover_size(self.cover_spec.width_mm, self.cover_spec.height_mm)
@@ -390,12 +390,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _file_dialog_directory(self) -> str:
         """Return the last directory used by any file dialog."""
-        settings = QtCore.QSettings("CDCoverPrint", "CDCoverPrint")
+        settings = QtCore.QSettings("HomeCoverPrint", "HomeCoverPrint")
         return str(settings.value(self.FILE_DIRECTORY_KEY, str(Path.home())))
 
     def _remember_file_path(self, path: str) -> None:
         """Remember the directory containing a successfully chosen file."""
-        QtCore.QSettings("CDCoverPrint", "CDCoverPrint").setValue(
+        QtCore.QSettings("HomeCoverPrint", "HomeCoverPrint").setValue(
             self.FILE_DIRECTORY_KEY, str(Path(path).parent)
         )
 
@@ -815,7 +815,7 @@ class MainWindow(QtWidgets.QMainWindow):
         path, _ = QtWidgets.QFileDialog.getSaveFileName(
             self,
             "Export PDF",
-            str(Path(self._file_dialog_directory()) / "cd-cover.pdf"),
+            str(Path(self._file_dialog_directory()) / "cover.pdf"),
             "PDF files (*.pdf)",
         )
         if not path:

@@ -1,4 +1,4 @@
-"""Entry point for the CD jewel-case cover designer."""
+"""Entry point for the Home Cover Print designer."""
 
 from __future__ import annotations
 
@@ -13,8 +13,8 @@ from src.window import MainWindow
 def main() -> int:
     """Run the desktop application."""
     app = QtWidgets.QApplication(sys.argv)
-    app.setApplicationName("CD Cover Print")
-    app.setApplicationDisplayName("CD Cover Print")
+    app.setApplicationName("Home Cover Print")
+    app.setApplicationDisplayName("Home Cover Print")
     app.setOrganizationName("Qvart")
     app.setWindowIcon(create_application_icon())
     window = MainWindow()

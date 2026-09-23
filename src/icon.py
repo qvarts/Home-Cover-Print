@@ -4,7 +4,7 @@ from PySide6 import QtCore, QtGui
 
 
 def create_application_icon() -> QtGui.QIcon:
-    """Create a simple CD-disc icon used as the window and taskbar icon."""
+    """Create a simple disc icon used as the window and taskbar icon."""
     pixmap = QtGui.QPixmap(64, 64)
     pixmap.fill(QtCore.Qt.GlobalColor.transparent)
     painter = QtGui.QPainter(pixmap)

@@ -23,21 +23,21 @@ if ($LASTEXITCODE -ne 0) {
     throw "Could not generate application icon."
 }
 
-Write-Host "Building CD Cover Print..."
+Write-Host "Building Home Cover Print..."
 & $Python -m PyInstaller `
     --noconfirm `
     --clean `
     --windowed `
     --onefile `
-    --name "CD Cover Print" `
-    --icon "cd_cover_print.ico" `
+    --name "HomeCoverPrint" `
+    --icon "home_cover_print.ico" `
     main.py
 
 if ($LASTEXITCODE -ne 0) {
     throw "Build failed."
 }
 
-$Output = Join-Path $ProjectRoot "dist\CD Cover Print.exe"
+$Output = Join-Path $ProjectRoot "dist\HomeCoverPrint.exe"
 Write-Host ""
 Write-Host "Build completed:"
 Write-Host $Output
