@@ -43,6 +43,6 @@ COVER_SPECS = (
     CoverSpec("booklet", "Front Booklet (Jewel/Slim) — 240 × 120 mm", 240.0, 120.0, (120.0,)),
     CoverSpec("back", "Back Inlay (Jewel) — 152 × 118 mm", 152.0, 118.0, (6.0, 146.0)),
     CoverSpec("tray", "Tray Inlay (Jewel) — 152 × 118 mm", 152.0, 118.0, (6.0, 146.0)),
-    CoverSpec("ext_front", "Extended Front Cover (Slim) — 138 × 120 mm", 138.0, 120.0, (4.0, 18.0)),
-    CoverSpec("ext_booklet", "Extended Front Booklet (Slim) — 258 × 120 mm", 258.0, 120.0, (4.0, 18.0, 138.0)),
+    CoverSpec("cass_front", "Front Cover (Cassette) — 97 × 102 mm", 97.0, 102.0, (20.0, 32.0)),
+    CoverSpec("cass_booklet", "Front Booklet (Cassette) — 162 × 102 mm", 162.0, 102.0, (20.0, 32.0, 97.0)),
 )
