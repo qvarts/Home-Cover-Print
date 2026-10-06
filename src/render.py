@@ -1,3 +1,18 @@
+# Copyright (C) 2026 Vitaliy Kolobanov <vitaliy.kolobanov@yahoo.com>
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License,
+# or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 """A4 PDF and printer rendering of the millimetre-based cover scene."""
 
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -80,3 +95,4 @@ class CoverRenderer:
         for item, (previous_state, previous_opacity) in zip(frame_items, previous_guide_states):
             item.show_guides = previous_state
             item.fold_guide_opacity = previous_opacity
+

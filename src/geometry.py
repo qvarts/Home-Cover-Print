@@ -1,3 +1,18 @@
+# Copyright (C) 2026 Vitaliy Kolobanov <vitaliy.kolobanov@yahoo.com>
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License,
+# or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 """Unit conversion and mutable active-cover dimensions.
 
 Helper functions keep millimetre-based scene coordinates in one place so that
@@ -146,3 +161,4 @@ def arrow_nudge_delta(event: QtGui.QKeyEvent) -> Optional[tuple[float, float]]:
     )
     dx, dy = directions[event.key()]
     return dx * step, dy * step
+
