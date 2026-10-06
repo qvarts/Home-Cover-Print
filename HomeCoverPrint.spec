@@ -5,7 +5,7 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[('home_cover_print.svg', '.'), ('home_cover_print.ico', '.')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

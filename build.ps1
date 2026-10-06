@@ -24,16 +24,23 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host "Building Home Cover Print..."
-& $Python -m PyInstaller `
-    --noconfirm `
-    --clean `
-    --windowed `
-    --onefile `
-    --name "HomeCoverPrint" `
-    --icon "home_cover_print.ico" `
-    main.py
-
-if ($LASTEXITCODE -ne 0) {
+try {
+    & $Python -m PyInstaller `
+        --noconfirm `
+        --clean `
+        --windowed `
+        --onefile `
+        --name "HomeCoverPrint" `
+        --icon "home_cover_print.ico" `
+        --add-data "home_cover_print.svg;." `
+        --add-data "home_cover_print.ico;." `
+        main.py
+    
+    if ($LASTEXITCODE -ne 0) {
+        throw "PyInstaller exited with error code $LASTEXITCODE"
+    }
+} catch {
+    Write-Error "An error occurred during the PyInstaller build process: $_"
     throw "Build failed."
 }
 

@@ -1,23 +1,25 @@
-"""Application icon drawn as vector primitives so no image asset is required."""
 
-from PySide6 import QtCore, QtGui
+"""Load the application icon from the bundled image asset."""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+from PySide6 import QtGui
+
+
+def _icon_path() -> Path:
+    """Return the ICO next to the project root, including a frozen EXE."""
+    if getattr(sys, "frozen", False):
+        return Path(sys._MEIPASS) / "home_cover_print.ico"
+    return Path(__file__).resolve().parent.parent / "home_cover_print.ico"
 
 
 def create_application_icon() -> QtGui.QIcon:
-    """Create a simple disc icon used as the window and taskbar icon."""
-    pixmap = QtGui.QPixmap(64, 64)
-    pixmap.fill(QtCore.Qt.GlobalColor.transparent)
-    painter = QtGui.QPainter(pixmap)
-    painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
-    painter.setBrush(QtGui.QColor("#263746"))
-    painter.setPen(QtGui.QPen(QtGui.QColor("#17232d"), 2))
-    painter.drawEllipse(QtCore.QRectF(5, 5, 54, 54))
-    painter.setBrush(QtGui.QColor("#79c2d0"))
-    painter.setPen(QtCore.Qt.PenStyle.NoPen)
-    painter.drawEllipse(QtCore.QRectF(25, 25, 14, 14))
-    painter.setBrush(QtGui.QColor("#f4f7f8"))
-    painter.drawEllipse(QtCore.QRectF(29, 29, 6, 6))
-    painter.setPen(QtGui.QPen(QtGui.QColor("#79c2d0"), 2))
-    painter.drawArc(QtCore.QRectF(13, 13, 38, 38), 25 * 16, 75 * 16)
-    painter.end()
-    return QtGui.QIcon(pixmap)
+    """Load the window and taskbar icon from the bundled ICO."""
+    icon = QtGui.QIcon(str(_icon_path()))
+    if icon.isNull():
+        raise RuntimeError(f"Could not load application icon: {_icon_path()}")
+    return icon
+
