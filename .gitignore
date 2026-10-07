@@ -24,6 +24,7 @@ share/python-wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+*.spec
 MANIFEST
 
 # Virtual environments
@@ -50,14 +51,6 @@ coverage.xml
 .pytest_cache/
 cover/
 
-# Django & Flask stuff
-*.log
-local_settings.py
-db.sqlite3
-db.sqlite3-journal
-instance/
-.webassets-cache
-
 # Jupyter Notebook
 .ipynb_checkpoints
 
@@ -71,6 +64,7 @@ dmypy.json
 
 # Transfer patches
 cd-cover-changes.patch
+make-patch.sh
 
 # IDEs and Editors
 .idea/
