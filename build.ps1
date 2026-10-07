@@ -51,7 +51,7 @@ if (Test-Path $BuildPath) {
 }
 Write-Log "`n"
 
-Write-Log "--- [2/4] Bootstrapping Environment ---" -Color Cyan
+Write-Log "--- [2/4] Environment Setup ---" -Color Cyan
 
 # Check Python
 python --version
@@ -63,29 +63,35 @@ if ($LASTEXITCODE -ne 0) {
 $VenvPath = Join-Path $ProjectRoot ".venv"
 $Python = Join-Path $VenvPath "Scripts\python.exe"
 
-if (-not (Test-Path $Python)) {
-    Write-Log "  [!] Virtual environment not found. Creating one..." -Color Yellow
-    python -m venv .venv
-    if ($LASTEXITCODE -ne 0) { exit 1 }
-    Write-Log "  [+] Virtual environment created successfully." -Color Green
+# LOCAL ONLY: Create virtual environment if it doesn't exist
+if ($env:CI -ne "true") {
+    if (-not (Test-Path $Python)) {
+        Write-Log "  [!] Virtual environment not found. Creating one..." -Color Yellow
+        python -m venv .venv
+        if ($LASTEXITCODE -ne 0) { exit 1 }
+        Write-Log "  [+] Virtual environment created successfully." -Color Green
+    } else {
+        Write-Log "  [+] Existing virtual environment found." -Color Green
+    }
 } else {
-    Write-Log "  [+] Existing virtual environment found." -Color Green
+    # In CI, use system python
+    $Python = "python"
+    Write-Log "  [+] Using system Python (CI environment)." -Color Green
 }
 
-Write-Log "`n  Updating dependencies..." -Color Cyan
-& $Python -m pip install --upgrade pip
-
-Write-Log "  Installing build tools..." -Color Cyan
-& $Python -m pip install pyinstaller pillow
-if ($LASTEXITCODE -ne 0) { exit 1 }
-
-if (Test-Path "requirements.txt") {
-    Write-Log "  Installing project requirements from requirements.txt..." -Color Cyan
-    & $Python -m pip install -r requirements.txt
-    if ($LASTEXITCODE -ne 0) { exit 1 }
+# Local dependency installation
+if ($env:CI -ne "true") {
+    Write-Log "`n  Updating dependencies..." -Color Cyan
+    & $Python -m pip install --upgrade pip
+    & $Python -m pip install pyinstaller pillow
+    if (Test-Path "requirements.txt") {
+        & $Python -m pip install -r requirements.txt
+    }
+    Write-Log "  [+] Dependencies installed." -Color Green
+} else {
+    Write-Log "  [+] Skipping dependency installation (managed by GitHub Actions)." -Color Green
 }
-
-Write-Log "`n  [+] Environment Ready.`n" -Color Green
+Write-Log "`n"
 
 Write-Log "--- [3/4] Asset Generation ---" -Color Cyan
 $RequiredAssets = @("home_cover_print.svg", "main.py", "build_icon.py")
