@@ -72,6 +72,13 @@ If you encounter any issues or have suggestions for improvement, please open an 
 
 <br>
 
+## ☕ Donate
+If you find this tool useful and it saved you some time, feel free to support its development with a coffee:
+
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy_Me_a_Coffee-ffdd00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://ko-fi.com/G7S128CUA5)
+
+<br>
+
 ## 📜 License
 
 This project is licensed under the **GNU General Public License v3.0 (GPLv3)**. See the [LICENSE](./LICENSE) file for details.

@@ -33,6 +33,8 @@ SNAP_THRESHOLD_MM = 2.0
 NUDGE_STEP_MM = 1.0
 NUDGE_STEP_LARGE_MM = 5.0
 
+SPONSOR_URL = "https://ko-fi.com/G7S128CUA5"
+
 
 @dataclass(frozen=True)
 class CoverSpec:

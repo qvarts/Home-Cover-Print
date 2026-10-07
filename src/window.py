@@ -21,7 +21,7 @@ from pathlib import Path
 from src.version import __version__
 from typing import Optional
 
-from PySide6 import QtCore, QtGui, QtPrintSupport, QtWidgets
+from PySide6 import QtCore, QtGui, QtPrintSupport, QtWidgets, QtNetwork
 
 from src.constants import (
     BLEED_MM,
@@ -30,6 +30,7 @@ from src.constants import (
     PAGE_HEIGHT_MM,
     PAGE_WIDTH_MM,
     SNAP_THRESHOLD_MM,
+    SPONSOR_URL,
 )
 from src.geometry import (
     cover_height,
@@ -175,6 +176,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._build_option_checks(side)
         side.addStretch()
         side.addWidget(self._copyright_label())
+        self._build_sponsor_button(side)
         layout.addWidget(sidebar)
         self.setCentralWidget(central)
         self.statusBar().showMessage("Select an image and use its handles to resize or rotate")
@@ -292,6 +294,13 @@ class MainWindow(QtWidgets.QMainWindow):
         copyright_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         copyright_label.setStyleSheet("color: #6f7b86; padding-top: 8px;")
         return copyright_label
+
+    def _build_sponsor_button(self, side: QtWidgets.QVBoxLayout) -> None:
+        sponsor_btn = QtWidgets.QPushButton("☕ BUY ME A COFFEE")
+        sponsor_btn.setStyleSheet("background-color: #FEDD00; color: black; border: none; padding: 6px 12px; font-size: 11px; font-weight: bold;")
+        sponsor_btn.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+        sponsor_btn.clicked.connect(lambda: QtGui.QDesktopServices.openUrl(QtCore.QUrl(SPONSOR_URL)))
+        side.addWidget(sponsor_btn)
 
     def set_cover_type(self, index: int) -> None:
         """Switch the active physical cover format without deleting artwork."""
