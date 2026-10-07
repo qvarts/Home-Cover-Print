@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from src.version import __version__
 from typing import Optional
 
 from PySide6 import QtCore, QtGui, QtPrintSupport, QtWidgets
@@ -93,7 +94,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("Home Cover Print")
         self.resize(1350, 860)
         self.cover_spec = COVER_SPECS[0]
         set_active_cover_size(self.cover_spec.width_mm, self.cover_spec.height_mm)

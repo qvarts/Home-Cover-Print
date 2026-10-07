@@ -21,6 +21,7 @@ import sys
 
 from PySide6 import QtWidgets
 
+from src.version import __version__
 from src.icon import create_application_icon
 from src.window import MainWindow
 
@@ -29,12 +30,13 @@ def main() -> int:
     """Run the desktop application."""
     app = QtWidgets.QApplication(sys.argv)
     app.setApplicationName("Home Cover Print")
-    app.setApplicationDisplayName("Home Cover Print")
     app.setOrganizationName("Qvart")
     app.setWindowIcon(create_application_icon())
+    
     window = MainWindow()
-    window.setWindowIcon(app.windowIcon())
+    window.setWindowTitle(f"Home Cover Print v{__version__}")
     window.show()
+
     return app.exec()
 
 

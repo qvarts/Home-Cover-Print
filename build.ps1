@@ -24,6 +24,21 @@ Write-Log "   HOME COVER PRINT - Build Process" -Color Magenta
 Write-Log "================================================================================" -Color Magenta
 Write-Log "`n"
 
+# --- [0/4] Version Extraction ---
+$VersionFile = Join-Path $ProjectRoot "src\version.py"
+if (Test-Path $VersionFile) {
+    $VersionLine = Get-Content $VersionFile | Select-String "__version__"
+    if ($VersionLine) {
+        $Version = ($VersionLine -split '"')[1]
+        if (-not $Version) { $Version = ($VersionLine -split "'")[1] }
+    } else {
+        $Version = "0.0.0"
+    }
+} else {
+    $Version = "0.0.0"
+}
+$ExeName = "HomeCoverPrint_win_$Version"
+
 # Always clean build directory to prevent PyInstaller cache issues
 Write-Log "--- [1/4] Workspace Cleanup ---" -Color Cyan
 $BuildPath = Join-Path $ProjectRoot "build"
@@ -95,7 +110,7 @@ Write-Log "  Starting PyInstaller build process..." -Color Cyan
     --clean `
     --windowed `
     --onefile `
-    --name "HomeCoverPrint" `
+    --name "$ExeName" `
     --icon "home_cover_print.ico" `
     --add-data "home_cover_print.svg;." `
     --add-data "home_cover_print.ico;." `
@@ -106,7 +121,16 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
-$Output = Join-Path $ProjectRoot "dist\HomeCoverPrint.exe"
+# --- Post-build Cleanup (Silent) ---
+$SpecFile = "$ExeName.spec"
+if (Test-Path $SpecFile) {
+    Remove-Item $SpecFile
+}
+if (Test-Path $BuildPath) {
+    Remove-Item -Recurse -Force $BuildPath
+}
+
+$Output = Join-Path $ProjectRoot "dist\$ExeName.exe"
 Write-Log "`n"
 Write-Log "================================================================================" -Color Green
 Write-Log "  BUILD COMPLETED SUCCESSFULLY!" -Color Green
