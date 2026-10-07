@@ -1,0 +1,58 @@
+name: Build Windows Executable
+
+on:
+  # Trigger the workflow on push of any tag starting with 'v' (e.g., v0.1.0)
+  push:
+    tags:
+      - 'v*'
+  # Allows manual trigger from the Actions tab
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    # Grant permissions to create releases and read tags
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Fetch all history for changelog generation
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller pillow PySide6
+          if (Test-Path "requirements.txt") { pip install -r requirements.txt }
+
+      - name: Run build script
+        shell: pwsh
+        env:
+          CI: true
+        run: |
+          ./build.ps1
+
+      - name: Create Release Draft
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          prerelease: false
+          files: dist/*.exe
+          # Automatically generate a changelog from commit messages
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Artifact (Backup)
+        uses: actions/upload-artifact@v4
+        with:
+          name: HomeCoverPrint-Windows
+          path: dist/*.exe
